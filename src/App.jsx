@@ -49,6 +49,7 @@ export default function App() {
 
   const canvasRef     = useRef(null);
   const rafRef        = useRef(null);
+  const loopGenRef    = useRef(0);  // incremented each trial to kill stale loops
   const stairRef      = useRef(null);
   const trialRef      = useRef(null);
   const dataRef       = useRef(null);
@@ -144,7 +145,9 @@ export default function App() {
 
   const startRenderLoop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const myGen = ++loopGenRef.current;  // this loop's generation ID
     const tick = now => {
+      if (loopGenRef.current !== myGen) return;  // stale loop — bail out
       const canvas = canvasRef.current;
       const trial  = trialRef.current;
       if (!canvas || !trial) return;
