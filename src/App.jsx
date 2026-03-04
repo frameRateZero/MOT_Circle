@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   generateMasterScript, samplePosition, applyTransform,
-  computeLoad,
+  computeLoad, computeUnifiedLoad,
   ARENA_RADIUS, NUM_MASTERS,
   SIMULATION_HZ, TOTAL_FRAMES,
 } from './PhysicsEngine';
@@ -149,7 +149,7 @@ export default function App() {
     ctx.font = '13px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(
-      `Trial ${trial.trialId}  |  Load: ${trial.achievedLoad.toFixed(2)}  |  T:${trial.numTargets}/B:${trial.numBalls}  |  ${trial.staircaseType}  |  ${curPhase}`,
+      `Trial ${trial.trialId}  |  L: ${trial.unifiedLoad.toFixed(2)}  |  T:${trial.numTargets}/B:${trial.numBalls}/S:${trial.speed.toFixed(2)}/D:${trial.moveDur.toFixed(1)}s  |  ${trial.staircaseType}  |  ${curPhase}`,
       12, 18
     );
   }, []);
@@ -219,18 +219,20 @@ export default function App() {
 
     const ballPool    = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
     const targetIDs   = ballPool.slice(0, params.numTargets);
-    const achievedLoad = computeLoad(params.numTargets, params.speed, params.numBalls);
+    const achievedLoad  = computeLoad(params.numTargets, params.speed, params.numBalls);
 
-    // Duration: if staircase controls it directly, use that value.
-    // Otherwise scale inversely with load: easy=long, hard=short, ±20% jitter.
+    // Duration: staircase controls it directly (no jitter) or scale inversely with load
     let moveDur;
     if (params.duration !== null) {
-      moveDur = params.duration; // duration staircase — no jitter, it's the IV
+      moveDur = params.duration;
     } else {
       const baseDur = MAX_MOVE_DUR * Math.sqrt(LOAD_DUR_REF / Math.max(achievedLoad, 0.5));
       const jitter  = 0.8 + Math.random() * 0.4;
       moveDur = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
     }
+
+    // Unified load: (T × S × √B) × (1 + 0.05 × D)
+    const unifiedLoad = computeUnifiedLoad(params.numTargets, params.speed, params.numBalls, moveDur);
 
     trialRef.current = {
       trialId:       ++trialIdRef.current,
@@ -243,6 +245,7 @@ export default function App() {
       targetLoad:    params.targetLoad,
       staircaseLoad: params.staircaseLoad,
       achievedLoad,
+      unifiedLoad,
     };
 
     selectedRef.current = new Set();
@@ -332,6 +335,7 @@ export default function App() {
       move_dur:        +trial.moveDur.toFixed(4),
       target_load:     +trial.targetLoad.toFixed(4),
       achieved_load:   +trial.achievedLoad.toFixed(4),
+      unified_load:    +trial.unifiedLoad.toFixed(4),
       staircase_load:  +trial.staircaseLoad.toFixed(4),
       target_ids:      targets.join(';'),
       selected_ids:    selected.join(';'),

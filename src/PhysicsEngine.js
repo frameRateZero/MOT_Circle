@@ -96,12 +96,17 @@ export function applyTransform(x, y, rotationRad, isMirrored) {
   return { x: tx, y: ty };
 }
 
-/** Load = Targets * Speed * sqrt(TotalBalls) */
+/** Spatial load only: L = T × S × √B */
 export function computeLoad(numTargets, playbackSpeed, numBalls) {
   return numTargets * playbackSpeed * Math.sqrt(numBalls);
 }
 
-/** Invert load formula to find required playback speed. */
+/** Full unified load including duration: L = (T × S × √B) × (1 + 0.05 × D) */
+export function computeUnifiedLoad(numTargets, playbackSpeed, numBalls, durationSec) {
+  return computeLoad(numTargets, playbackSpeed, numBalls) * (1 + 0.05 * durationSec);
+}
+
+/** Invert unified load to find required playback speed. */
 export function solvePlaybackSpeed(load, numTargets, numBalls) {
   const denom = numTargets * Math.sqrt(numBalls);
   if (denom === 0) return 1;
