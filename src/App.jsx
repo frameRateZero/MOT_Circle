@@ -42,6 +42,7 @@ export default function App() {
   const [expPhase,         setExpPhase]         = useState('idle');
   const [logs,             setLogs]             = useState([]);
   const [staircaseSummary, setStaircaseSummary] = useState(null);
+  const [selectionCount,   setSelectionCount]   = useState(0);
   const [settings, setSettings] = useState({
     staircaseRule: '1up2down',
     initialLoad:   6,
@@ -222,6 +223,7 @@ export default function App() {
     };
 
     selectedRef.current = new Set();
+    setSelectionCount(0);
     setTrialResult(null);
     expPhaseRef.current = 'cue';
     setExpPhase('cue');
@@ -255,6 +257,7 @@ export default function App() {
         const sel = new Set(selectedRef.current);
         sel.has(b) ? sel.delete(b) : sel.add(b);
         selectedRef.current = sel;
+        setSelectionCount(sel.size);
         drawFrame(canvasRef.current.getContext('2d'), trial, ff, 'respond', 0, sel);
         break;
       }
@@ -402,7 +405,15 @@ export default function App() {
               }}
             />
             <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'center' }}>
-              {expPhase === 'respond' && <Btn onClick={handleSubmitResponse} accent>Submit Response</Btn>}
+              {expPhase === 'respond' && (
+                <Btn
+                  onClick={handleSubmitResponse}
+                  accent={selectionCount === trialRef.current?.numTargets}
+                  disabled={selectionCount !== trialRef.current?.numTargets}
+                >
+                  Submit ({selectionCount} / {trialRef.current?.numTargets})
+                </Btn>
+              )}
               <Btn onClick={async () => {
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
                 setLogs(await getAllTrialLogs());
@@ -424,7 +435,11 @@ export default function App() {
             <div style={{ marginTop: 16, borderTop: '1px solid #222', paddingTop: 12 }}>
               {expPhase === 'cue'     && <Hint>Memorise the glowing balls!</Hint>}
               {expPhase === 'move'    && <Hint>Track the targets...</Hint>}
-              {expPhase === 'respond' && <Hint>Click each ball you tracked, then Submit.</Hint>}
+              {expPhase === 'respond' && (
+                <Hint>
+                  Select {trialRef.current?.numTargets} balls — {selectionCount} chosen
+                </Hint>
+              )}
               {expPhase === 'feedback' && trialResult && (
                 <div>
                   <div style={{ color: trialResult.correct ? CLR.correct : CLR.selected, fontSize: 20, fontWeight: 'bold' }}>
