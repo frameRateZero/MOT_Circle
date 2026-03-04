@@ -82,7 +82,7 @@ export default function App() {
     setPhase('setup');
   }, []);
 
-  const drawFrame = useCallback((ctx, trial, frameFloat, curPhase, elapsed, selected) => {
+  const drawFrame = useCallback((ctx, trial, frameFloat, curPhase, elapsed, selected, glowFade = 1.0) => {
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     ctx.fillStyle = CLR.bg;
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -113,7 +113,12 @@ export default function App() {
         const pulse = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 4);
         ctx.fillStyle   = CLR.target;
         ctx.shadowColor = CLR.target;
-        ctx.shadowBlur  = 8 + pulse * 14;
+        ctx.shadowBlur  = (8 + pulse * 14) * glowFade;
+      } else if (curPhase === 'move' && isTarget && glowFade > 0) {
+        // Fading glow during early movement
+        ctx.fillStyle   = CLR.target;
+        ctx.shadowColor = CLR.target;
+        ctx.shadowBlur  = 22 * glowFade;
       } else if (curPhase === 'respond' && isSelected) {
         ctx.fillStyle   = CLR.selected;
         ctx.shadowColor = CLR.selected;
@@ -176,7 +181,13 @@ export default function App() {
         ff = trialRef.current?.lastFrame ?? 0;
       }
 
-      drawFrame(canvas.getContext('2d'), trial, ff, expPhaseRef.current, elapsed, selectedRef.current);
+      // Fade glow out over first 0.4s of movement
+      const FADE_DUR = 0.4;
+      const glowFade = expPhaseRef.current === 'move'
+        ? Math.max(0, 1 - elapsed / FADE_DUR)
+        : expPhaseRef.current === 'cue' ? 1 : 0;
+
+      drawFrame(canvas.getContext('2d'), trial, ff, expPhaseRef.current, elapsed, selectedRef.current, glowFade);
 
       if (expPhaseRef.current !== 'respond')
         rafRef.current = requestAnimationFrame(tick);
@@ -279,7 +290,7 @@ export default function App() {
       playback_speed: +trial.speed.toFixed(4),
       num_targets:    trial.numTargets,
       num_balls:      trial.numBalls,
-      load:           +trial.load.toFixed(4),
+      move_dur:       +trial.moveDur.toFixed(4),
       target_ids:     targets.join(';'),
       selected_ids:   selected.join(';'),
       raw_score:      +rawScore.toFixed(4),
