@@ -46,8 +46,9 @@ export default function App() {
   const [summaries,        setSummaries]        = useState([]);
   const [selectionCount,   setSelectionCount]   = useState(0);
   const [settings, setSettings] = useState({
-    staircaseRule: '1up2down',
-    initialLoad:   6,
+    staircaseRule:       '1up2down',
+    initialLoad:         6,
+    durationInitialLoad: 5.0,
   });
 
   const canvasRef      = useRef(null);
@@ -258,9 +259,9 @@ export default function App() {
   // ── Start experiment ─────────────────────────────────────────────────────────
   const handleStartExperiment = useCallback(async () => {
     staircasesRef.current = [
-      new StaircaseEngine({ type: 'speed',    initialLoad: settings.initialLoad, rule: settings.staircaseRule }),
-      new StaircaseEngine({ type: 'density',  initialLoad: settings.initialLoad, rule: settings.staircaseRule }),
-      new StaircaseEngine({ type: 'duration', initialLoad: 5.0,                  rule: settings.staircaseRule }),
+      new StaircaseEngine({ type: 'speed',    initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
+      new StaircaseEngine({ type: 'density',  initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
+      new StaircaseEngine({ type: 'duration', initialLoad: settings.durationInitialLoad, rule: settings.staircaseRule }),
     ];
     trialIdRef.current = 0;
     setTrialCount(0);
@@ -402,9 +403,14 @@ export default function App() {
               </select>
             </label>
             <label style={S.lbl}>
-              Initial Load
-              <input type="number" min={1} max={40} value={settings.initialLoad} style={S.inp}
+              Initial Load (Speed / Density)
+              <input type="number" min={1} max={40} step={0.1} value={settings.initialLoad} style={S.inp}
                 onChange={e => setSettings(s => ({ ...s, initialLoad: +e.target.value }))} />
+            </label>
+            <label style={S.lbl}>
+              Initial Load (Duration, seconds)
+              <input type="number" min={1} max={30} step={0.1} value={settings.durationInitialLoad} style={S.inp}
+                onChange={e => setSettings(s => ({ ...s, durationInitialLoad: +e.target.value }))} />
             </label>
             <div style={{ marginTop: 8, fontSize: 12, color: CLR.dim, lineHeight: 1.6 }}>
               Three interleaved staircases run simultaneously:<br />
