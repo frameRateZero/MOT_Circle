@@ -16,6 +16,7 @@ const CENTER       = CANVAS_SIZE / 2;
 const CUE_DURATION = 2.0;
 const MIN_MOVE_DUR = 1.5;
 const MAX_MOVE_DUR = 4.0;
+const DISPLAY_BALL_RADIUS = 18; // larger balls for easier tapping
 
 const CLR = {
   bg: '#0d0d14', arena: '#13131f', border: '#2a2a4a',
@@ -104,7 +105,7 @@ export default function App() {
       const isSelected = selected.has(b);
 
       ctx.beginPath();
-      ctx.arc(cx, cy, BALL_RADIUS, 0, Math.PI * 2);
+      ctx.arc(cx, cy, DISPLAY_BALL_RADIUS, 0, Math.PI * 2);
 
       ctx.shadowBlur = 0;
       if (curPhase === 'cue' && isTarget) {
@@ -124,7 +125,7 @@ export default function App() {
 
       if (curPhase === 'respond') {
         ctx.fillStyle    = '#fff';
-        ctx.font         = `bold ${BALL_RADIUS}px monospace`;
+        ctx.font         = `bold ${DISPLAY_BALL_RADIUS}px monospace`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(b, cx, cy);
@@ -156,6 +157,9 @@ export default function App() {
         setExpPhase('move');
         phaseStartRef.current = now;
       } else if (curPhase === 'move' && elapsed >= trial.moveDur) {
+        // Capture the exact last frame BEFORE switching phase
+        const finalFrame = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
+        trialRef.current.lastFrame = finalFrame;
         expPhaseRef.current = 'respond';
         setExpPhase('respond');
         phaseStartRef.current = now;
@@ -232,7 +236,7 @@ export default function App() {
     for (let b = 0; b < trial.numBalls; b++) {
       const pos = samplePosition(dataRef.current, b, 0, trial.isReversed);
       const tp  = applyTransform(pos.x, pos.y, trial.rotation, trial.isMirrored);
-      if (Math.hypot(mx - CENTER - tp.x, my - CENTER - tp.y) < BALL_RADIUS * 1.8) {
+      if (Math.hypot(mx - CENTER - tp.x, my - CENTER - tp.y) < DISPLAY_BALL_RADIUS * 1.8) {
         const sel = new Set(selectedRef.current);
         sel.has(b) ? sel.delete(b) : sel.add(b);
         selectedRef.current = sel;
