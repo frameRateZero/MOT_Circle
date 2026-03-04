@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   generateMasterScript, samplePosition, applyTransform,
-  computeLoad, solvePlaybackSpeed,
-  ARENA_RADIUS, BALL_RADIUS, NUM_BALLS, NUM_MASTERS,
+  computeLoad,
+  ARENA_RADIUS, NUM_MASTERS,
   SIMULATION_HZ, TOTAL_FRAMES,
 } from './PhysicsEngine';
 import { StaircaseEngine } from './StaircaseEngine';
@@ -11,18 +11,19 @@ import {
   clearMasterScripts, saveTrialLog, getAllTrialLogs, clearTrialLogs,
 } from './db';
 
-const CANVAS_SIZE  = 800;
-const CENTER       = CANVAS_SIZE / 2;
-const CUE_DURATION = 2.0;
-const MIN_MOVE_DUR = 1.0;   // shortest duration (high load)
-const MAX_MOVE_DUR = 15.0;  // longest duration (low load)
-const LOAD_DUR_REF = 12.0;  // load at which duration = ~midpoint; tune to taste
-const DISPLAY_BALL_RADIUS = 18; // larger balls for easier tapping
+const CANVAS_SIZE         = 800;
+const CENTER              = CANVAS_SIZE / 2;
+const CUE_DURATION        = 2.0;
+const MIN_MOVE_DUR        = 1.0;   // seconds — high load floor
+const MAX_MOVE_DUR        = 15.0;  // seconds — low load ceiling
+const LOAD_DUR_REF        = 12.0;  // load value that yields ~midpoint duration
+const DISPLAY_BALL_RADIUS = 18;
 
 const CLR = {
   bg: '#0d0d14', arena: '#13131f', border: '#2a2a4a',
   ball: '#4a9eff', target: '#ffcc00', selected: '#ff6b6b',
   correct: '#44ff88', text: '#e0e0f0', dim: '#666688',
+  speed: '#ff9944', density: '#44ddff',
 };
 
 const shuffle = arr => {
@@ -42,29 +43,31 @@ export default function App() {
   const [trialResult,      setTrialResult]      = useState(null);
   const [expPhase,         setExpPhase]         = useState('idle');
   const [logs,             setLogs]             = useState([]);
-  const [staircaseSummary, setStaircaseSummary] = useState(null);
+  const [summaries,        setSummaries]        = useState([]);
   const [selectionCount,   setSelectionCount]   = useState(0);
   const [settings, setSettings] = useState({
     staircaseRule: '1up2down',
     initialLoad:   6,
   });
 
-  const canvasRef     = useRef(null);
-  const rafRef        = useRef(null);
-  const loopGenRef    = useRef(0);  // incremented each trial to kill stale loops
-  const stairRef      = useRef(null);
-  const trialRef      = useRef(null);
-  const dataRef       = useRef(null);
-  const expPhaseRef   = useRef('idle');
-  const phaseStartRef = useRef(0);
-  const selectedRef   = useRef(new Set());
-  const trialIdRef    = useRef(0);
+  const canvasRef      = useRef(null);
+  const rafRef         = useRef(null);
+  const loopGenRef     = useRef(0);
+  const staircasesRef  = useRef([]);   // [speedStair, densityStair]
+  const activeIdxRef   = useRef(0);    // which staircase is active this trial
+  const trialRef       = useRef(null);
+  const dataRef        = useRef(null);
+  const expPhaseRef    = useRef('idle');
+  const phaseStartRef  = useRef(0);
+  const selectedRef    = useRef(new Set());
+  const trialIdRef     = useRef(0);
 
   useEffect(() => {
     countMasterScripts().then(n => setScriptCount(n));
     getAllTrialLogs().then(rows => setLogs(rows));
   }, []);
 
+  // ── Generation ──────────────────────────────────────────────────────────────
   const handleGenerate = useCallback(async () => {
     setPhase('generating');
     setGenProgress(0);
@@ -84,6 +87,7 @@ export default function App() {
     setPhase('setup');
   }, []);
 
+  // ── Drawing ─────────────────────────────────────────────────────────────────
   const drawFrame = useCallback((ctx, trial, frameFloat, curPhase, elapsed, selected, glowFade = 1.0) => {
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     ctx.fillStyle = CLR.bg;
@@ -109,15 +113,14 @@ export default function App() {
 
       ctx.beginPath();
       ctx.arc(cx, cy, DISPLAY_BALL_RADIUS, 0, Math.PI * 2);
-
       ctx.shadowBlur = 0;
+
       if (curPhase === 'cue' && isTarget) {
         const pulse = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 4);
         ctx.fillStyle   = CLR.target;
         ctx.shadowColor = CLR.target;
         ctx.shadowBlur  = (8 + pulse * 14) * glowFade;
       } else if (curPhase === 'move' && isTarget && glowFade > 0) {
-        // Fading glow during early movement
         ctx.fillStyle   = CLR.target;
         ctx.shadowColor = CLR.target;
         ctx.shadowBlur  = 22 * glowFade;
@@ -145,16 +148,17 @@ export default function App() {
     ctx.font = '13px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(
-      `Trial ${trial.trialId}  |  Load: ${trial.load.toFixed(2)}  |  Targets: ${trial.numTargets}/${trial.numBalls}  |  ${curPhase}`,
+      `Trial ${trial.trialId}  |  Load: ${trial.achievedLoad.toFixed(2)}  |  T:${trial.numTargets}/B:${trial.numBalls}  |  ${trial.staircaseType}  |  ${curPhase}`,
       12, 18
     );
   }, []);
 
+  // ── Render loop ──────────────────────────────────────────────────────────────
   const startRenderLoop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    const myGen = ++loopGenRef.current;  // this loop's generation ID
+    const myGen = ++loopGenRef.current;
     const tick = now => {
-      if (loopGenRef.current !== myGen) return;  // stale loop — bail out
+      if (loopGenRef.current !== myGen) return; // stale loop guard
       const canvas = canvasRef.current;
       const trial  = trialRef.current;
       if (!canvas || !trial) return;
@@ -167,9 +171,8 @@ export default function App() {
         setExpPhase('move');
         phaseStartRef.current = now;
       } else if (curPhase === 'move' && elapsed >= trial.moveDur) {
-        // Capture the exact last frame BEFORE switching phase
-        const finalFrame = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
-        trialRef.current.lastFrame = finalFrame;
+        // Capture exact final frame before switching
+        trialRef.current.lastFrame = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
         expPhaseRef.current = 'respond';
         setExpPhase('respond');
         phaseStartRef.current = now;
@@ -183,7 +186,7 @@ export default function App() {
         ff = trialRef.current?.lastFrame ?? 0;
       }
 
-      // Fade glow out over first 0.4s of movement
+      // Glow fades out over first 0.4s of movement
       const FADE_DUR = 0.4;
       const glowFade = expPhaseRef.current === 'move'
         ? Math.max(0, 1 - elapsed / FADE_DUR)
@@ -197,9 +200,13 @@ export default function App() {
     rafRef.current = requestAnimationFrame(tick);
   }, [drawFrame]);
 
+  // ── New trial ────────────────────────────────────────────────────────────────
   const startNewTrial = useCallback(async () => {
-    const stair  = stairRef.current;
-    const params = stair.pickTrialParams(solvePlaybackSpeed);
+    // Randomly pick which staircase drives this trial
+    activeIdxRef.current = Math.floor(Math.random() * staircasesRef.current.length);
+    const activeStair    = staircasesRef.current[activeIdxRef.current];
+    const params         = activeStair.pickTrialParams();
+
     const masterID   = Math.floor(Math.random() * NUM_MASTERS);
     const rotation   = Math.random() * Math.PI * 2;
     const isMirrored = Math.random() < 0.5;
@@ -209,25 +216,32 @@ export default function App() {
     if (!data) { alert('Master scripts missing — please regenerate.'); return; }
     dataRef.current = data;
 
-    const ballPool  = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
-    const targetIDs = ballPool.slice(0, params.numTargets);
-    const trialLoad = computeLoad(params.numTargets, params.speed, params.numBalls);
+    const ballPool    = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
+    const targetIDs   = ballPool.slice(0, params.numTargets);
+    const achievedLoad = computeLoad(params.numTargets, params.speed, params.numBalls);
 
-    // Duration scales inversely with load: easy trials run longer, hard trials shorter.
-    // Base duration = MAX * (LOAD_DUR_REF / load)^0.5, clamped to [MIN, MAX].
-    // Add ±20% jitter so the participant can't time the response.
-    const baseDur  = MAX_MOVE_DUR * Math.sqrt(LOAD_DUR_REF / Math.max(trialLoad, 0.5));
-    const jitter   = 0.8 + Math.random() * 0.4;
-    const moveDur  = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
+    // Duration: if staircase controls it directly, use that value.
+    // Otherwise scale inversely with load: easy=long, hard=short, ±20% jitter.
+    let moveDur;
+    if (params.duration !== null) {
+      moveDur = params.duration; // duration staircase — no jitter, it's the IV
+    } else {
+      const baseDur = MAX_MOVE_DUR * Math.sqrt(LOAD_DUR_REF / Math.max(achievedLoad, 0.5));
+      const jitter  = 0.8 + Math.random() * 0.4;
+      moveDur = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
+    }
 
     trialRef.current = {
-      trialId: ++trialIdRef.current,
-      masterID, rotation, isMirrored, isReversed,
-      speed:      params.speed,
-      numTargets: params.numTargets,
-      numBalls:   params.numBalls,
-      targetIDs,  moveDur,
-      load: trialLoad,
+      trialId:       ++trialIdRef.current,
+      masterID,      rotation, isMirrored, isReversed,
+      speed:         params.speed,
+      numTargets:    params.numTargets,
+      numBalls:      params.numBalls,
+      targetIDs,     moveDur,
+      staircaseType: params.staircaseType,
+      targetLoad:    params.targetLoad,
+      staircaseLoad: params.staircaseLoad,
+      achievedLoad,
     };
 
     selectedRef.current = new Set();
@@ -239,15 +253,23 @@ export default function App() {
     startRenderLoop();
   }, [startRenderLoop]);
 
+  const CLR_DURATION = '#bb44ff';
+
+  // ── Start experiment ─────────────────────────────────────────────────────────
   const handleStartExperiment = useCallback(async () => {
-    stairRef.current   = new StaircaseEngine({ initialLoad: settings.initialLoad, rule: settings.staircaseRule });
+    staircasesRef.current = [
+      new StaircaseEngine({ type: 'speed',    initialLoad: settings.initialLoad, rule: settings.staircaseRule }),
+      new StaircaseEngine({ type: 'density',  initialLoad: settings.initialLoad, rule: settings.staircaseRule }),
+      new StaircaseEngine({ type: 'duration', initialLoad: 5.0,                  rule: settings.staircaseRule }),
+    ];
     trialIdRef.current = 0;
     setTrialCount(0);
-    setStaircaseSummary(null);
+    setSummaries([]);
     setPhase('experiment');
     await startNewTrial();
   }, [settings, startNewTrial]);
 
+  // ── Canvas interaction ───────────────────────────────────────────────────────
   const handleCanvasInteraction = useCallback((clientX, clientY) => {
     if (expPhaseRef.current !== 'respond') return;
     const trial = trialRef.current;
@@ -277,11 +299,12 @@ export default function App() {
   }, [handleCanvasInteraction]);
 
   const handleCanvasTouch = useCallback(e => {
-    e.preventDefault(); // stops iOS scroll/zoom interference
+    e.preventDefault();
     const touch = e.changedTouches[0];
     handleCanvasInteraction(touch.clientX, touch.clientY);
   }, [handleCanvasInteraction]);
 
+  // ── Submit ───────────────────────────────────────────────────────────────────
   const handleSubmitResponse = useCallback(async () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     const trial    = trialRef.current;
@@ -291,36 +314,44 @@ export default function App() {
     const rawScore = hits / targets.length;
     const correct  = rawScore === 1.0;
 
+    // Update only the staircase that generated this trial
+    staircasesRef.current[activeIdxRef.current].update(correct);
+
     const logRow = {
-      trial_id:       trial.trialId,
-      timestamp:      new Date().toISOString(),
-      master_id:      trial.masterID,
-      rotation:       +(trial.rotation * 180 / Math.PI).toFixed(1),
-      is_mirrored:    trial.isMirrored ? 1 : 0,
-      is_reversed:    trial.isReversed ? 1 : 0,
-      playback_speed: +trial.speed.toFixed(4),
-      num_targets:    trial.numTargets,
-      num_balls:      trial.numBalls,
-      move_dur:       +trial.moveDur.toFixed(4),
-      target_ids:     targets.join(';'),
-      selected_ids:   selected.join(';'),
-      raw_score:      +rawScore.toFixed(4),
-      correct:        correct ? 1 : 0,
+      trial_id:        trial.trialId,
+      timestamp:       new Date().toISOString(),
+      staircase_type:  trial.staircaseType,
+      master_id:       trial.masterID,
+      rotation:        +(trial.rotation * 180 / Math.PI).toFixed(1),
+      is_mirrored:     trial.isMirrored ? 1 : 0,
+      is_reversed:     trial.isReversed ? 1 : 0,
+      playback_speed:  +trial.speed.toFixed(4),
+      num_targets:     trial.numTargets,
+      num_balls:       trial.numBalls,
+      move_dur:        +trial.moveDur.toFixed(4),
+      target_load:     +trial.targetLoad.toFixed(4),
+      achieved_load:   +trial.achievedLoad.toFixed(4),
+      staircase_load:  +trial.staircaseLoad.toFixed(4),
+      target_ids:      targets.join(';'),
+      selected_ids:    selected.join(';'),
+      hits,
+      raw_score:       +rawScore.toFixed(4),
+      correct:         correct ? 1 : 0,
     };
 
     await saveTrialLog(logRow);
-    stairRef.current.update(correct, { numTargets: trial.numTargets, numBalls: trial.numBalls, speed: trial.speed });
 
     const updatedLogs = await getAllTrialLogs();
     setLogs(updatedLogs);
     setTrialCount(t => t + 1);
     setTrialResult({ rawScore, correct, hits, total: targets.length });
-    setStaircaseSummary(stairRef.current.summary());
+    setSummaries(staircasesRef.current.map(s => s.summary()));
     expPhaseRef.current = 'feedback';
     setExpPhase('feedback');
     setTimeout(() => startNewTrial(), 1500);
   }, [startNewTrial]);
 
+  // ── Export ───────────────────────────────────────────────────────────────────
   const handleExport = useCallback(async () => {
     const rows = await getAllTrialLogs();
     if (!rows.length) { alert('No data to export.'); return; }
@@ -346,9 +377,10 @@ export default function App() {
         MOT Research
       </h1>
       <p style={{ textAlign: 'center', color: CLR.dim, margin: '0 0 24px', fontSize: 13 }}>
-        Multiple Object Tracking / Adaptive Staircase PWA
+        Multiple Object Tracking — Interleaved Adaptive Staircase
       </p>
 
+      {/* ── SETUP ── */}
       {phase === 'setup' && (
         <div style={{ maxWidth: 620, margin: '0 auto' }}>
           <Panel title="Stimulus Library">
@@ -365,8 +397,8 @@ export default function App() {
               Rule
               <select value={settings.staircaseRule} style={S.sel}
                 onChange={e => setSettings(s => ({ ...s, staircaseRule: e.target.value }))}>
-                <option value="1up2down">1-up / 2-down  (~70.7%)</option>
-                <option value="3down1up">3-down / 1-up  (~79.4%)</option>
+                <option value="1up2down">1-up / 2-down (~70.7%)</option>
+                <option value="1up3down">1-up / 3-down (~79.4%)</option>
               </select>
             </label>
             <label style={S.lbl}>
@@ -374,6 +406,14 @@ export default function App() {
               <input type="number" min={1} max={40} value={settings.initialLoad} style={S.inp}
                 onChange={e => setSettings(s => ({ ...s, initialLoad: +e.target.value }))} />
             </label>
+            <div style={{ marginTop: 8, fontSize: 12, color: CLR.dim, lineHeight: 1.6 }}>
+              Three interleaved staircases run simultaneously:<br />
+              <span style={{ color: CLR.speed }}>■ Speed</span> — fixes T=3, B=12, varies playback speed<br />
+              <span style={{ color: CLR.density }}>■ Density</span> — fixes T=3, S=1.0, varies number of balls<br />
+              <span style={{ color: '#bb44ff' }}>■ Duration</span> — fixes T=3, B=12, S=1.0, varies time<br />
+              Speed ≈ Density threshold validates L = T×S×√B as universal unit.
+              Duration threshold tests time-limited tracking capacity independently.
+            </div>
           </Panel>
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -390,6 +430,7 @@ export default function App() {
         </div>
       )}
 
+      {/* ── GENERATING ── */}
       {phase === 'generating' && (
         <div style={{ maxWidth: 480, margin: '80px auto', textAlign: 'center' }}>
           <div style={{ color: CLR.target, marginBottom: 14 }}>Generating Master Scripts...</div>
@@ -398,6 +439,7 @@ export default function App() {
         </div>
       )}
 
+      {/* ── EXPERIMENT ── */}
       {phase === 'experiment' && (
         <div style={{ display: 'flex', gap: 20, justifyContent: 'center', alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div>
@@ -430,23 +472,38 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ minWidth: 220, background: '#11111e', borderRadius: 8, padding: 18, fontSize: 13 }}>
+          {/* ── Sidebar ── */}
+          <div style={{ minWidth: 240, background: '#11111e', borderRadius: 8, padding: 18, fontSize: 13 }}>
             <div style={{ color: CLR.target, fontWeight: 'bold', marginBottom: 12 }}>Session</div>
             <Row label="Trial">{trialCount}</Row>
-            {staircaseSummary && (
-              <>
-                <Row label="Load">{staircaseSummary.currentLoad}</Row>
-                <Row label="Threshold">{staircaseSummary.threshold}</Row>
-                <Row label="Reversals">{staircaseSummary.reversals}</Row>
-              </>
-            )}
+
+            {/* Per-staircase summaries */}
+            {summaries.map(s => (
+              <div key={s.type} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1a1a2e' }}>
+                <div style={{
+                  color: s.type === 'speed' ? CLR.speed : s.type === 'density' ? CLR.density : '#bb44ff',
+                  fontWeight: 'bold', marginBottom: 4, fontSize: 11
+                }}>
+                  {s.type.toUpperCase()} STAIRCASE
+                </div>
+                <Row label={s.type === 'duration' ? 'Duration' : 'Load'}>
+                  {s.type === 'duration' ? `${s.currentLoad}s` : s.currentLoad}
+                </Row>
+                <Row label="Threshold">
+                  {s.reversals >= 2
+                    ? (s.type === 'duration' ? `${s.threshold}s` : s.threshold)
+                    : '—'}
+                </Row>
+                <Row label="Reversals">{s.reversals}</Row>
+                <Row label="Trials">{s.trials}</Row>
+              </div>
+            ))}
+
             <div style={{ marginTop: 16, borderTop: '1px solid #222', paddingTop: 12 }}>
-              {expPhase === 'cue'     && <Hint>Memorise the glowing balls!</Hint>}
-              {expPhase === 'move'    && <Hint>Track the targets...</Hint>}
+              {expPhase === 'cue'  && <Hint>Memorise the glowing balls!</Hint>}
+              {expPhase === 'move' && <Hint>Track the targets...</Hint>}
               {expPhase === 'respond' && (
-                <Hint>
-                  Select {trialRef.current?.numTargets} balls — {selectionCount} chosen
-                </Hint>
+                <Hint>Select {trialRef.current?.numTargets} balls — {selectionCount} chosen</Hint>
               )}
               {expPhase === 'feedback' && trialResult && (
                 <div>
@@ -466,6 +523,7 @@ export default function App() {
   );
 }
 
+// ── UI primitives ────────────────────────────────────────────────────────────
 function Panel({ title, children }) {
   return (
     <div style={{ background: '#11111e', borderRadius: 8, padding: 16, marginBottom: 16 }}>
