@@ -1,5 +1,5 @@
 /**
- * Adaptive staircase for MOT load tracking.
+ * Adaptive staircase for MOT_Circle load tracking.
  * '1up2down' => ~70.7% threshold. '3down1up' => ~79.4%.
  */
 export class StaircaseEngine {
