@@ -14,8 +14,9 @@ import {
 const CANVAS_SIZE  = 800;
 const CENTER       = CANVAS_SIZE / 2;
 const CUE_DURATION = 2.0;
-const MIN_MOVE_DUR = 1.5;
-const MAX_MOVE_DUR = 4.0;
+const MIN_MOVE_DUR = 1.0;   // shortest duration (high load)
+const MAX_MOVE_DUR = 15.0;  // longest duration (low load)
+const LOAD_DUR_REF = 12.0;  // load at which duration = ~midpoint; tune to taste
 const DISPLAY_BALL_RADIUS = 18; // larger balls for easier tapping
 
 const CLR = {
@@ -210,7 +211,14 @@ export default function App() {
 
     const ballPool  = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
     const targetIDs = ballPool.slice(0, params.numTargets);
-    const moveDur   = MIN_MOVE_DUR + Math.random() * (MAX_MOVE_DUR - MIN_MOVE_DUR);
+    const trialLoad = computeLoad(params.numTargets, params.speed, params.numBalls);
+
+    // Duration scales inversely with load: easy trials run longer, hard trials shorter.
+    // Base duration = MAX * (LOAD_DUR_REF / load)^0.5, clamped to [MIN, MAX].
+    // Add ±20% jitter so the participant can't time the response.
+    const baseDur  = MAX_MOVE_DUR * Math.sqrt(LOAD_DUR_REF / Math.max(trialLoad, 0.5));
+    const jitter   = 0.8 + Math.random() * 0.4;
+    const moveDur  = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
 
     trialRef.current = {
       trialId: ++trialIdRef.current,
@@ -219,7 +227,7 @@ export default function App() {
       numTargets: params.numTargets,
       numBalls:   params.numBalls,
       targetIDs,  moveDur,
-      load: computeLoad(params.numTargets, params.speed, params.numBalls),
+      load: trialLoad,
     };
 
     selectedRef.current = new Set();

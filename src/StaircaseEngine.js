@@ -27,22 +27,24 @@ export class StaircaseEngine {
     this.history.push({ load: this.load, correct, ...meta });
     const prev = this._lastDir;
 
-    if (!correct) {
-      this._cc = 0;
-      const newLoad = Math.min(this.maxLoad, this.load * this.stepSize);
-      if (prev === 'down') this.reversals.push(this.load);
-      this._lastDir = 'up';
-      this.load = newLoad;
-    } else {
+    if (correct) {
+      // Correct → task too easy → increase difficulty (load goes UP)
       this._cc++;
       const needed = this.rule === '3down1up' ? 3 : 2;
       if (this._cc >= needed) {
         this._cc = 0;
-        const newLoad = Math.max(this.minLoad, this.load / this.stepSize);
-        if (prev === 'up') this.reversals.push(this.load);
-        this._lastDir = 'down';
+        const newLoad = Math.min(this.maxLoad, this.load * this.stepSize);
+        if (prev === 'down') this.reversals.push(this.load); // reversal: was getting easier, now harder
+        this._lastDir = 'up';
         this.load = newLoad;
       }
+    } else {
+      // Incorrect → task too hard → decrease difficulty (load goes DOWN)
+      this._cc = 0;
+      const newLoad = Math.max(this.minLoad, this.load / this.stepSize);
+      if (prev === 'up') this.reversals.push(this.load); // reversal: was getting harder, now easier
+      this._lastDir = 'down';
+      this.load = newLoad;
     }
   }
 

@@ -104,5 +104,6 @@ export function computeLoad(numTargets, playbackSpeed, numBalls) {
 /** Invert load formula to find required playback speed. */
 export function solvePlaybackSpeed(load, numTargets, numBalls) {
   const denom = numTargets * Math.sqrt(numBalls);
-  return denom === 0 ? 1 : Math.max(0.2, Math.min(6.0, load / denom));
+  if (denom === 0) return 1;
+  return Math.max(0.1, Math.min(8.0, load / denom));
 }
