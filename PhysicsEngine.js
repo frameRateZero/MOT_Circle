@@ -1,30 +1,108 @@
-const CACHE_NAME = 'mot-pwa-v2';
-const PRECACHE   = ['/', '/index.html'];
+/**
+ * Deterministic 120Hz trajectory generator.
+ * Uses mulberry32 seeded PRNG — same masterID always yields identical paths.
+ * Buffer layout: Float32Array[(frame * NUM_BALLS + ballId) * 2] => [x, y]
+ */
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(PRECACHE)));
-  self.skipWaiting();
-});
+export const ARENA_RADIUS          = 390;
+export const BALL_RADIUS           = 10;
+export const NUM_BALLS             = 20;
+export const NUM_MASTERS           = 20;
+export const SIMULATION_HZ         = 120;
+export const SIMULATION_DURATION_S = 30;
+export const TOTAL_FRAMES          = SIMULATION_HZ * SIMULATION_DURATION_S; // 3600
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
-});
+function mulberry32(seed) {
+  return () => {
+    seed |= 0;
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          caches.open(CACHE_NAME).then(c => c.put(e.request, res.clone()));
-        }
-        return res;
-      });
-      return cached || net;
-    })
-  );
-});
+function reflectCircle(x, y, vx, vy, effectiveR) {
+  const dist = Math.sqrt(x * x + y * y);
+  if (dist + 1e-9 > effectiveR) {
+    const nx = x / dist, ny = y / dist;
+    const dot = vx * nx + vy * ny;
+    vx -= 2 * dot * nx;
+    vy -= 2 * dot * ny;
+    const overlap = dist - effectiveR;
+    x -= nx * (overlap + 0.5);
+    y -= ny * (overlap + 0.5);
+  }
+  return { x, y, vx, vy };
+}
+
+export function generateMasterScript(masterID, speedPxPerSec = 180, onProgress = null) {
+  const rng        = mulberry32(masterID * 123456 + 7891011);
+  const dt         = 1 / SIMULATION_HZ;
+  const effectiveR = ARENA_RADIUS - BALL_RADIUS;
+
+  const balls = Array.from({ length: NUM_BALLS }, () => {
+    const angle  = rng() * Math.PI * 2;
+    const r      = rng() * (effectiveR - 20);
+    const vAngle = rng() * Math.PI * 2;
+    const speed  = speedPxPerSec * (0.7 + rng() * 0.6);
+    return {
+      x:  Math.cos(angle) * r,
+      y:  Math.sin(angle) * r,
+      vx: Math.cos(vAngle) * speed,
+      vy: Math.sin(vAngle) * speed,
+    };
+  });
+
+  const data = new Float32Array(TOTAL_FRAMES * NUM_BALLS * 2);
+
+  for (let f = 0; f < TOTAL_FRAMES; f++) {
+    for (let b = 0; b < NUM_BALLS; b++) {
+      let { x, y, vx, vy } = balls[b];
+      x += vx * dt;
+      y += vy * dt;
+      const r2 = reflectCircle(x, y, vx, vy, effectiveR);
+      balls[b] = r2;
+      const idx = (f * NUM_BALLS + b) * 2;
+      data[idx]     = r2.x;
+      data[idx + 1] = r2.y;
+    }
+    if (onProgress && f % 360 === 0) onProgress(f, TOTAL_FRAMES);
+  }
+  return data;
+}
+
+/** Sub-frame linear interpolation with optional time-reversal. */
+export function samplePosition(data, ballID, frameFloat, isReversed) {
+  let ff = isReversed ? (TOTAL_FRAMES - 1 - frameFloat) : frameFloat;
+  ff = Math.max(0, Math.min(TOTAL_FRAMES - 1.001, ff));
+  const f0    = Math.floor(ff) % TOTAL_FRAMES;
+  const f1    = (f0 + 1) % TOTAL_FRAMES;
+  const alpha = ff - Math.floor(ff);
+  const i0    = (f0 * NUM_BALLS + ballID) * 2;
+  const i1    = (f1 * NUM_BALLS + ballID) * 2;
+  return {
+    x: data[i0]     * (1 - alpha) + data[i1]     * alpha,
+    y: data[i0 + 1] * (1 - alpha) + data[i1 + 1] * alpha,
+  };
+}
+
+/** Rotation (radians) + optional horizontal mirror. */
+export function applyTransform(x, y, rotationRad, isMirrored) {
+  const cos = Math.cos(rotationRad), sin = Math.sin(rotationRad);
+  let tx = x * cos - y * sin;
+  let ty = x * sin + y * cos;
+  if (isMirrored) tx = -tx;
+  return { x: tx, y: ty };
+}
+
+/** Load = Targets * Speed * sqrt(TotalBalls) */
+export function computeLoad(numTargets, playbackSpeed, numBalls) {
+  return numTargets * playbackSpeed * Math.sqrt(numBalls);
+}
+
+/** Invert load formula to find required playback speed. */
+export function solvePlaybackSpeed(load, numTargets, numBalls) {
+  const denom = numTargets * Math.sqrt(numBalls);
+  return denom === 0 ? 1 : Math.max(0.2, Math.min(6.0, load / denom));
+}
