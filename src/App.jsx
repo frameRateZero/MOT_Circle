@@ -161,9 +161,13 @@ export default function App() {
         phaseStartRef.current = now;
       }
 
-      const ff = expPhaseRef.current === 'move'
-        ? (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES
-        : 0;
+      let ff;
+      if (expPhaseRef.current === 'move') {
+        ff = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
+        trialRef.current.lastFrame = ff;
+      } else {
+        ff = trialRef.current?.lastFrame ?? 0;
+      }
 
       drawFrame(canvas.getContext('2d'), trial, ff, expPhaseRef.current, elapsed, selectedRef.current);
 
