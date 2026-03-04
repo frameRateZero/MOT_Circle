@@ -227,27 +227,38 @@ export default function App() {
     await startNewTrial();
   }, [settings, startNewTrial]);
 
-  const handleCanvasClick = useCallback(e => {
+  const handleCanvasInteraction = useCallback((clientX, clientY) => {
     if (expPhaseRef.current !== 'respond') return;
     const trial = trialRef.current;
     if (!trial) return;
     const rect  = canvasRef.current.getBoundingClientRect();
     const scale = CANVAS_SIZE / rect.width;
-    const mx    = (e.clientX - rect.left) * scale;
-    const my    = (e.clientY - rect.top)  * scale;
+    const mx    = (clientX - rect.left) * scale;
+    const my    = (clientY - rect.top)  * scale;
+    const ff    = trial.lastFrame ?? 0;
 
     for (let b = 0; b < trial.numBalls; b++) {
-      const pos = samplePosition(dataRef.current, b, 0, trial.isReversed);
+      const pos = samplePosition(dataRef.current, b, ff, trial.isReversed);
       const tp  = applyTransform(pos.x, pos.y, trial.rotation, trial.isMirrored);
       if (Math.hypot(mx - CENTER - tp.x, my - CENTER - tp.y) < DISPLAY_BALL_RADIUS * 1.8) {
         const sel = new Set(selectedRef.current);
         sel.has(b) ? sel.delete(b) : sel.add(b);
         selectedRef.current = sel;
-        drawFrame(canvasRef.current.getContext('2d'), trial, 0, 'respond', 0, sel);
+        drawFrame(canvasRef.current.getContext('2d'), trial, ff, 'respond', 0, sel);
         break;
       }
     }
   }, [drawFrame]);
+
+  const handleCanvasClick = useCallback(e => {
+    handleCanvasInteraction(e.clientX, e.clientY);
+  }, [handleCanvasInteraction]);
+
+  const handleCanvasTouch = useCallback(e => {
+    e.preventDefault(); // stops iOS scroll/zoom interference
+    const touch = e.changedTouches[0];
+    handleCanvasInteraction(touch.clientX, touch.clientY);
+  }, [handleCanvasInteraction]);
 
   const handleSubmitResponse = useCallback(async () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -370,11 +381,13 @@ export default function App() {
           <div>
             <canvas ref={canvasRef} width={CANVAS_SIZE} height={CANVAS_SIZE}
               onClick={handleCanvasClick}
+              onTouchEnd={handleCanvasTouch}
               style={{
                 display: 'block', maxWidth: '100%',
                 borderRadius: '50%',
                 cursor: expPhase === 'respond' ? 'crosshair' : 'default',
                 border: `2px solid ${CLR.border}`,
+                touchAction: 'none',
               }}
             />
             <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'center' }}>
