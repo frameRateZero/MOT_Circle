@@ -54,14 +54,19 @@ export default function App() {
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
   const loopGenRef     = useRef(0);
-  const staircasesRef  = useRef([]);   // [speedStair, densityStair]
-  const activeIdxRef   = useRef(0);    // which staircase is active this trial
+  const staircasesRef  = useRef([]);
+  const activeIdxRef   = useRef(0);
   const trialRef       = useRef(null);
   const dataRef        = useRef(null);
   const expPhaseRef    = useRef('idle');
   const phaseStartRef  = useRef(0);
   const selectedRef    = useRef(new Set());
   const trialIdRef     = useRef(0);
+  // Retest bank: rolling window of recent trials eligible for retest
+  // Entry: { trialId, masterID, isMirrored, isReversed, numTargets, numBalls, targetIDs }
+  const retestBankRef   = useRef([]);
+  const RETEST_RATE     = 0.20;  // 20% of trials are retests
+  const RETEST_BANK_MAX = 15;    // only pull retests from the last N trials
 
   useEffect(() => {
     countMasterScripts().then(n => setScriptCount(n));
@@ -148,8 +153,9 @@ export default function App() {
     ctx.fillStyle = CLR.dim;
     ctx.font = '13px monospace';
     ctx.textAlign = 'left';
+    const retestLabel = trial.isRetest ? `  |  RETEST of #${trial.retestOfTrialId} (+${trial.retestRotationDelta}°)` : '';
     ctx.fillText(
-      `Trial ${trial.trialId}  |  L: ${trial.unifiedLoad.toFixed(2)}  |  T:${trial.numTargets}/B:${trial.numBalls}/S:${trial.speed.toFixed(2)}/D:${trial.moveDur.toFixed(1)}s  |  ${trial.staircaseType}  |  ${curPhase}`,
+      `Trial ${trial.trialId}  |  L: ${trial.unifiedLoad.toFixed(2)}  |  T:${trial.numTargets}/B:${trial.numBalls}/S:${trial.speed.toFixed(2)}/D:${trial.moveDur.toFixed(1)}s  |  ${trial.staircaseType}${retestLabel}  |  ${curPhase}`,
       12, 18
     );
   }, []);
@@ -203,24 +209,53 @@ export default function App() {
 
   // ── New trial ────────────────────────────────────────────────────────────────
   const startNewTrial = useCallback(async () => {
-    // Randomly pick which staircase drives this trial
-    activeIdxRef.current = Math.floor(Math.random() * staircasesRef.current.length);
-    const activeStair    = staircasesRef.current[activeIdxRef.current];
-    const params         = activeStair.pickTrialParams();
+    const bank    = retestBankRef.current;
+    const isRetest = bank.length > 0 && Math.random() < RETEST_RATE;
 
-    const masterID   = Math.floor(Math.random() * NUM_MASTERS);
-    const rotation   = Math.random() * Math.PI * 2;
-    const isMirrored = Math.random() < 0.5;
-    const isReversed = Math.random() < 0.5;
+    let masterID, rotation, isMirrored, isReversed, numTargets, numBalls,
+        targetIDs, retestOfTrialId, retestRotationDelta;
+
+    if (isRetest) {
+      // Pull a random entry from the bank and rotate +90°
+      const source       = bank[Math.floor(Math.random() * bank.length)];
+      masterID           = source.masterID;
+      isMirrored         = source.isMirrored;
+      isReversed         = source.isReversed;
+      numTargets         = source.numTargets;
+      numBalls           = source.numBalls;
+      targetIDs          = [...source.targetIDs]; // same ball roles
+      retestOfTrialId    = source.trialId;
+      retestRotationDelta = Math.PI / 2;           // exactly +90°
+      rotation           = source.rotation + retestRotationDelta;
+    } else {
+      // Standard trial — staircase picks params
+      activeIdxRef.current = Math.floor(Math.random() * staircasesRef.current.length);
+      const params = staircasesRef.current[activeIdxRef.current].pickTrialParams();
+      masterID     = Math.floor(Math.random() * NUM_MASTERS);
+      rotation     = Math.random() * Math.PI * 2;
+      isMirrored   = Math.random() < 0.5;
+      isReversed   = Math.random() < 0.5;
+      numTargets   = params.numTargets;
+      numBalls     = params.numBalls;
+      targetIDs    = shuffle(Array.from({ length: numBalls }, (_, i) => i)).slice(0, numTargets);
+      retestOfTrialId     = null;
+      retestRotationDelta = null;
+    }
 
     const data = await loadMasterScript(masterID);
     if (!data) { alert('Master scripts missing — please regenerate.'); return; }
     dataRef.current = data;
 
-    const ballPool    = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
-    const targetIDs   = ballPool.slice(0, params.numTargets);
-    const achievedLoad  = computeLoad(params.numTargets, params.speed, params.numBalls);
-    // Duration: staircase controls it directly (no jitter) or scale inversely with load
+    // For retests, staircase still controls speed/duration so difficulty stays current
+    const activeStair = staircasesRef.current[activeIdxRef.current];
+    const params      = isRetest
+      ? activeStair.pickTrialParams()   // get current load params, ignore its T/B
+      : staircasesRef.current[activeIdxRef.current].pickTrialParams();
+
+    // Override T/B with retest values if applicable; use staircase speed/duration
+    const finalSpeed   = params.speed;
+    const achievedLoad = computeLoad(numTargets, finalSpeed, numBalls);
+
     let moveDur;
     if (params.duration !== null) {
       moveDur = params.duration;
@@ -230,21 +265,23 @@ export default function App() {
       moveDur = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
     }
 
-    // Unified load: (T × S × √B) × (1 + 0.05 × D)
-    const unifiedLoad = computeUnifiedLoad(params.numTargets, params.speed, params.numBalls, moveDur);
+    const unifiedLoad = computeUnifiedLoad(numTargets, finalSpeed, numBalls, moveDur);
 
     trialRef.current = {
-      trialId:       ++trialIdRef.current,
-      masterID,      rotation, isMirrored, isReversed,
-      speed:         params.speed,
-      numTargets:    params.numTargets,
-      numBalls:      params.numBalls,
-      targetIDs,     moveDur,
-      staircaseType: params.staircaseType,
-      targetLoad:    params.targetLoad,
-      staircaseLoad: params.staircaseLoad,
-      achievedLoad,
-      unifiedLoad,
+      trialId:            ++trialIdRef.current,
+      masterID,           rotation, isMirrored, isReversed,
+      speed:              finalSpeed,
+      numTargets,         numBalls,
+      targetIDs,          moveDur,
+      staircaseType:      params.staircaseType,
+      targetLoad:         params.targetLoad,
+      staircaseLoad:      params.staircaseLoad,
+      achievedLoad,       unifiedLoad,
+      isRetest,
+      retestOfTrialId,
+      retestRotationDelta: retestRotationDelta
+        ? +(retestRotationDelta * 180 / Math.PI).toFixed(1)
+        : null,
     };
 
     selectedRef.current = new Set();
@@ -266,6 +303,7 @@ export default function App() {
       new StaircaseEngine({ type: 'duration', initialLoad: settings.durationInitialLoad, rule: settings.staircaseRule }),
     ];
     trialIdRef.current = 0;
+    retestBankRef.current = [];
     setTrialCount(0);
     setSummaries([]);
     setPhase('experiment');
@@ -339,11 +377,30 @@ export default function App() {
       target_ids:      targets.join(';'),
       selected_ids:    selected.join(';'),
       hits,
-      raw_score:       +rawScore.toFixed(4),
-      correct:         correct ? 1 : 0,
+      raw_score:          +rawScore.toFixed(4),
+      correct:            correct ? 1 : 0,
+      is_retest:          trial.isRetest ? 1 : 0,
+      retest_of_trial_id: trial.retestOfTrialId ?? '',
+      retest_rotation_delta: trial.retestRotationDelta ?? '',
     };
 
     await saveTrialLog(logRow);
+
+    // Add to retest bank (non-retest trials only, capped at RETEST_BANK_MAX)
+    if (!trial.isRetest) {
+      const bank = retestBankRef.current;
+      bank.push({
+        trialId:    trial.trialId,
+        masterID:   trial.masterID,
+        rotation:   trial.rotation,
+        isMirrored: trial.isMirrored,
+        isReversed: trial.isReversed,
+        numTargets: trial.numTargets,
+        numBalls:   trial.numBalls,
+        targetIDs:  trial.targetIDs,
+      });
+      if (bank.length > RETEST_BANK_MAX) bank.shift();
+    }
 
     const updatedLogs = await getAllTrialLogs();
     setLogs(updatedLogs);
