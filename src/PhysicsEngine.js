@@ -9,8 +9,8 @@ export const BALL_RADIUS           = 10;
 export const NUM_BALLS             = 20;
 export const NUM_MASTERS           = 20;
 export const SIMULATION_HZ         = 120;
-export const SIMULATION_DURATION_S = 30;
-export const TOTAL_FRAMES          = SIMULATION_HZ * SIMULATION_DURATION_S; // 3600
+export const SIMULATION_DURATION_S = 300;
+export const TOTAL_FRAMES          = SIMULATION_HZ * SIMULATION_DURATION_S; // 36000
 
 function mulberry32(seed) {
   return () => {

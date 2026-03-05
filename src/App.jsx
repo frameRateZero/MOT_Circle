@@ -198,17 +198,22 @@ export default function App() {
         expPhaseRef.current = 'move';
         setExpPhase('move');
         phaseStartRef.current = now;
+        trialRef.current.frameAtMoveStart = trialRef.current.lastFrame ?? 0;
       } else if (curPhase === 'move' && elapsed >= trial.moveDur) {
-        // Capture exact final frame before switching
-        trialRef.current.lastFrame = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
         expPhaseRef.current = 'respond';
         setExpPhase('respond');
         phaseStartRef.current = now;
+        // lastFrame already continuously updated below — freeze it now
       }
 
       let ff;
       if (expPhaseRef.current === 'move') {
-        ff = (elapsed * SIMULATION_HZ * trial.speed) % TOTAL_FRAMES;
+        // Advance from where movement started, no wraparound beyond TOTAL_FRAMES-1
+        const frameOffset = elapsed * SIMULATION_HZ * trial.speed;
+        ff = Math.min(
+          (trialRef.current.frameAtMoveStart ?? 0) + frameOffset,
+          TOTAL_FRAMES - 1
+        );
         trialRef.current.lastFrame = ff;
       } else {
         ff = trialRef.current?.lastFrame ?? 0;
@@ -303,6 +308,8 @@ export default function App() {
       retestRotationDelta: retestRotationDelta
         ? +(retestRotationDelta * 180 / Math.PI).toFixed(1)
         : null,
+      lastFrame:        0,
+      frameAtMoveStart: 0,
     };
 
     selectedRef.current = new Set();
