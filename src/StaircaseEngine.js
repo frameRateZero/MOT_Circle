@@ -49,31 +49,33 @@ export class StaircaseEngine {
     let numTargets, numBalls, speed, duration;
 
     if (this.type === 'speed') {
-      // Random T (1-6) and B (T+2 to 20), solve for S
-      numTargets  = this._rndInt(1, 6);
-      numBalls    = this._rndInt(numTargets + 2, 20);
+      // Random T (1-5) and B (T*2+1 to 20), solve for S
+      numTargets  = this._rndInt(1, 5);
+      numBalls    = this._rndInt(numTargets * 2 + 1, 20);
       speed       = this.load / (numTargets * Math.sqrt(numBalls));
       duration    = null;
 
     } else if (this.type === 'density') {
-      // Random T (1-6), fixed S=1.0, solve for B
-      numTargets  = this._rndInt(1, 6);
+      // Random T (1-5), fixed S=1.0, solve for B
+      numTargets  = this._rndInt(1, 5);
       speed       = 1.0;
       const b     = Math.pow(this.load / (numTargets * speed), 2);
       numBalls    = Math.round(b);
       duration    = null;
 
     } else {
-      // Random T (1-6) and B (T+2 to 20), fixed S=1.0, load IS duration
-      numTargets  = this._rndInt(1, 6);
-      numBalls    = this._rndInt(numTargets + 2, 20);
+      // Random T (1-5) and B (T*2+1 to 20), fixed S=1.0, load IS duration
+      numTargets  = this._rndInt(1, 5);
+      numBalls    = this._rndInt(numTargets * 2 + 1, 20);
       speed       = 1.0;
       duration    = this.load;
     }
 
     // Clamp to physical limits
     const finalTargets = Math.max(1, Math.min(6, numTargets));
-    const finalBalls   = Math.max(finalTargets + 2, Math.min(20, Math.round(numBalls)));
+    // Targets must be a strict minority: T < B/2, i.e. B > T*2
+    const minBalls     = finalTargets * 2 + 1;
+    const finalBalls   = Math.max(minBalls, Math.min(20, Math.round(numBalls)));
     const finalSpeed   = Math.max(0.1, Math.min(8.0, speed));
 
     // Spatial load after clamping (for logging)
