@@ -220,7 +220,6 @@ export default function App() {
     const ballPool    = shuffle(Array.from({ length: params.numBalls }, (_, i) => i));
     const targetIDs   = ballPool.slice(0, params.numTargets);
     const achievedLoad  = computeLoad(params.numTargets, params.speed, params.numBalls);
-
     // Duration: staircase controls it directly (no jitter) or scale inversely with load
     let moveDur;
     if (params.duration !== null) {
