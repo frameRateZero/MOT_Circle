@@ -45,12 +45,11 @@ export function generateMasterScript(masterID, speedPxPerSec = 180, onProgress =
     const angle  = rng() * Math.PI * 2;
     const r      = rng() * (effectiveR - 20);
     const vAngle = rng() * Math.PI * 2;
-    const speed  = speedPxPerSec * (0.7 + rng() * 0.6);
     return {
       x:  Math.cos(angle) * r,
       y:  Math.sin(angle) * r,
-      vx: Math.cos(vAngle) * speed,
-      vy: Math.sin(vAngle) * speed,
+      vx: Math.cos(vAngle) * speedPxPerSec,
+      vy: Math.sin(vAngle) * speedPxPerSec,
     };
   });
 
