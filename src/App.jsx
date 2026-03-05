@@ -109,28 +109,28 @@ export default function App() {
     ctx.stroke();
     ctx.clip();
 
-    for (let b = 0; b < trial.numBalls; b++) {
+    // Pre-compute all positions
+    const ballPos = Array.from({ length: trial.numBalls }, (_, b) => {
       const pos = samplePosition(dataRef.current, b, frameFloat, trial.isReversed);
       const tp  = applyTransform(pos.x, pos.y, trial.rotation, trial.isMirrored);
-      const cx  = CENTER + tp.x;
-      const cy  = CENTER + tp.y;
-      const isTarget   = trial.targetIDs.includes(b);
-      const isSelected = selected.has(b);
+      return { cx: CENTER + tp.x, cy: CENTER + tp.y };
+    });
 
+    const glowingTarget = b =>
+      trial.targetIDs.includes(b) && (
+        curPhase === 'cue' ||
+        (curPhase === 'move' && glowFade > 0)
+      );
+
+    // Pass 1 — distractors and non-glowing balls (so targets always render on top)
+    for (let b = 0; b < trial.numBalls; b++) {
+      if (glowingTarget(b)) continue;
+      const { cx, cy } = ballPos[b];
+      const isSelected = selected.has(b);
       ctx.beginPath();
       ctx.arc(cx, cy, DISPLAY_BALL_RADIUS, 0, Math.PI * 2);
       ctx.shadowBlur = 0;
-
-      if (curPhase === 'cue' && isTarget) {
-        const pulse = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 4);
-        ctx.fillStyle   = CLR.target;
-        ctx.shadowColor = CLR.target;
-        ctx.shadowBlur  = (8 + pulse * 14) * glowFade;
-      } else if (curPhase === 'move' && isTarget && glowFade > 0) {
-        ctx.fillStyle   = CLR.target;
-        ctx.shadowColor = CLR.target;
-        ctx.shadowBlur  = 22 * glowFade;
-      } else if (curPhase === 'respond' && isSelected) {
+      if (curPhase === 'respond' && isSelected) {
         ctx.fillStyle   = CLR.selected;
         ctx.shadowColor = CLR.selected;
         ctx.shadowBlur  = 12;
@@ -139,7 +139,6 @@ export default function App() {
       }
       ctx.fill();
       ctx.shadowBlur = 0;
-
       if (curPhase === 'respond') {
         ctx.fillStyle    = '#fff';
         ctx.font         = `bold ${DISPLAY_BALL_RADIUS}px monospace`;
@@ -148,6 +147,28 @@ export default function App() {
         ctx.fillText(b, cx, cy);
       }
     }
+
+    // Pass 2 — glowing targets drawn on top of everything
+    for (let b = 0; b < trial.numBalls; b++) {
+      if (!glowingTarget(b)) continue;
+      const { cx, cy } = ballPos[b];
+      ctx.beginPath();
+      ctx.arc(cx, cy, DISPLAY_BALL_RADIUS, 0, Math.PI * 2);
+      ctx.shadowBlur = 0;
+      if (curPhase === 'cue') {
+        const pulse = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 4);
+        ctx.fillStyle   = CLR.target;
+        ctx.shadowColor = CLR.target;
+        ctx.shadowBlur  = (8 + pulse * 14) * glowFade;
+      } else {
+        ctx.fillStyle   = CLR.target;
+        ctx.shadowColor = CLR.target;
+        ctx.shadowBlur  = 22 * glowFade;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
     ctx.restore();
 
     ctx.fillStyle = CLR.dim;
@@ -520,7 +541,22 @@ export default function App() {
                 touchAction: 'none',
               }}
             />
-            <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'center' }}>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'center', minHeight: 36, alignItems: 'center' }}>
+              {expPhase === 'feedback' && trialResult && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{
+                    color: trialResult.correct ? CLR.correct : CLR.selected,
+                    fontSize: 22, fontWeight: 'bold', letterSpacing: 1,
+                  }}>
+                    {trialResult.correct ? '✓ Correct' : '✗ Missed'}
+                  </span>
+                  <span style={{ color: CLR.dim, fontSize: 13 }}>
+                    {trialResult.hits} / {trialResult.total}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'center' }}>
               {expPhase === 'respond' && (
                 <Btn
                   onClick={handleSubmitResponse}
@@ -566,20 +602,10 @@ export default function App() {
             ))}
 
             <div style={{ marginTop: 16, borderTop: '1px solid #222', paddingTop: 12 }}>
-              {expPhase === 'cue'  && <Hint>Memorise the glowing balls!</Hint>}
-              {expPhase === 'move' && <Hint>Track the targets...</Hint>}
+              {expPhase === 'cue'     && <Hint>Memorise the glowing balls!</Hint>}
+              {expPhase === 'move'    && <Hint>Track the targets...</Hint>}
               {expPhase === 'respond' && (
                 <Hint>Select {trialRef.current?.numTargets} balls — {selectionCount} chosen</Hint>
-              )}
-              {expPhase === 'feedback' && trialResult && (
-                <div>
-                  <div style={{ color: trialResult.correct ? CLR.correct : CLR.selected, fontSize: 20, fontWeight: 'bold' }}>
-                    {trialResult.correct ? 'Correct!' : 'Missed'}
-                  </div>
-                  <div style={{ color: CLR.dim, fontSize: 12, marginTop: 4 }}>
-                    {trialResult.hits} / {trialResult.total} targets found
-                  </div>
-                </div>
               )}
             </div>
           </div>
