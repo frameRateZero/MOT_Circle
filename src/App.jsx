@@ -14,9 +14,9 @@ import {
 const CANVAS_SIZE         = 800;
 const CENTER              = CANVAS_SIZE / 2;
 const CUE_DURATION        = 2.0;
-const MIN_MOVE_DUR        = 1.0;   // seconds — high load floor
-const MAX_MOVE_DUR        = 15.0;  // seconds — low load ceiling
-const LOAD_DUR_REF        = 12.0;  // load value that yields ~midpoint duration
+// Max trial duration is set by frame buffer: TOTAL_FRAMES / (SIMULATION_HZ * maxSpeed)
+// At max speed 8.0: 36000 / (120 * 8) = 37.5s — hard ceiling enforced at trial start
+const MAX_MOVE_DUR_HARD = 37.0;  // seconds — just under frame buffer limit at max speed
 const DISPLAY_BALL_RADIUS = 18;
 
 const CLR = {
@@ -284,11 +284,18 @@ export default function App() {
 
     let moveDur;
     if (params.duration !== null) {
-      moveDur = params.duration;
+      // Duration staircase — use directly, only cap at frame buffer limit
+      moveDur = Math.min(params.duration, MAX_MOVE_DUR_HARD / Math.max(finalSpeed, 0.1));
     } else {
-      const baseDur = MAX_MOVE_DUR * Math.sqrt(LOAD_DUR_REF / Math.max(achievedLoad, 0.5));
+      // Speed/density staircases — load-scaled duration with ±20% jitter
+      // Higher load → shorter duration (more demanding per second)
+      // Reference: load=5 → ~3s, scales as 1/sqrt(load)
+      const baseDur = 3.0 * Math.sqrt(5.0 / Math.max(achievedLoad, 0.5));
       const jitter  = 0.8 + Math.random() * 0.4;
-      moveDur = Math.max(MIN_MOVE_DUR, Math.min(MAX_MOVE_DUR, baseDur * jitter));
+      const rawDur  = baseDur * jitter;
+      // Hard cap: must not exceed frame buffer at this speed
+      const frameCap = MAX_MOVE_DUR_HARD / Math.max(finalSpeed, 0.1);
+      moveDur = Math.min(Math.max(rawDur, 1.0), frameCap);
     }
 
     const unifiedLoad = computeUnifiedLoad(numTargets, finalSpeed, numBalls, moveDur);
