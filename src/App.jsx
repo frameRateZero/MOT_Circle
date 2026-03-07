@@ -279,8 +279,10 @@ export default function App() {
 
   // ── New trial ────────────────────────────────────────────────────────────────
   const startNewTrial = useCallback(async () => {
-    const bank    = retestBankRef.current;
-    const isRetest = bank.length > 0 && Math.random() < RETEST_RATE;
+    const bank     = retestBankRef.current;
+    const mode     = engagementModeRef.current;
+    // Retest bank only fires in standard staircase mode
+    const isRetest = mode === 'off' && bank.length > 0 && Math.random() < RETEST_RATE;
 
     let masterID, rotation, isMirrored, isReversed, numTargets, numBalls,
         targetIDs, retestOfTrialId, retestRotationDelta;
@@ -439,25 +441,29 @@ export default function App() {
   }, []);
 
   // ── Path retest — next trial spec (path_retest mode) ─────────────────────────
-  // Each call to prNextSpec() returns the next queued spec.
-  // When queue is empty, generates a new master block:
-  //   - new masterID, base rotation, targetIDs
-  //   - 4 transforms × 4 durations = 16 specs, shuffled within each dimension:
-  //       durations shuffled independently per transform
-  //       transforms presented in random order
-  // This gives full coverage of the 4×4 grid per master without fixed ordering.
+  // Masters are drawn without replacement (shuffle cycle) so no master repeats
+  // until all NUM_MASTERS have been used. Within each master block:
+  //   - one random target selection, one random base rotation
+  //   - 4 transforms × 4 durations = 16 specs
+  //   - transform order randomised, duration order randomised per transform
+  const prMasterQueueRef = useRef([]);   // shuffle-cycle of master IDs
+
   const prNextSpec = useCallback(() => {
     if (prQueueRef.current.length > 0) return prQueueRef.current.shift();
 
-    // Generate new master block
-    const masterID   = Math.floor(Math.random() * NUM_MASTERS);
+    // Draw next master without replacement
+    if (prMasterQueueRef.current.length === 0)
+      prMasterQueueRef.current = shuffle(
+        Array.from({ length: NUM_MASTERS }, (_, i) => i)
+      );
+    const masterID = prMasterQueueRef.current.shift();
+
     const baseRot    = Math.random() * Math.PI * 2;
     const isReversed = Math.random() < 0.5;
     const allBalls   = Array.from({ length: PR_B }, (_, i) => i);
     const targetIDs  = shuffle(allBalls).slice(0, PR_T);
     prBaseRotRef.current = baseRot;
 
-    // Build 16 specs: shuffle transform order, shuffle duration order per transform
     const transformOrder = shuffle([0, 1, 2, 3]);
     const specs = [];
     for (const ti of transformOrder) {
@@ -466,13 +472,13 @@ export default function App() {
       for (const dur of durOrder) {
         specs.push({
           masterID,
-          targetIDs:       [...targetIDs],
-          rotation:        baseRot + rotOffset,
+          targetIDs:    [...targetIDs],
+          rotation:     baseRot + rotOffset,
           isMirrored,
           isReversed,
-          moveDur:         dur,
-          transformIdx:    ti,       // 0–3, logged for analysis
-          baseRotation:    baseRot,
+          moveDur:      dur,
+          transformIdx: ti,
+          baseRotation: baseRot,
         });
       }
     }
@@ -497,6 +503,8 @@ export default function App() {
     }
     trialIdRef.current = 0;
     retestBankRef.current = [];
+    prQueueRef.current = [];
+    prMasterQueueRef.current = [];
     setTrialCount(0);
     setSummaries([]);
     setPhase('experiment');
@@ -582,8 +590,8 @@ export default function App() {
 
     await saveTrialLog(logRow);
 
-    // Add to retest bank (non-retest trials only, capped at RETEST_BANK_MAX)
-    if (!trial.isRetest) {
+    // Add to retest bank — staircase mode only, non-retest trials, capped
+    if (engagementModeRef.current === 'off' && !trial.isRetest) {
       const bank = retestBankRef.current;
       bank.push({
         trialId:    trial.trialId,
