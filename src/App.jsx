@@ -55,8 +55,10 @@ export default function App() {
   // Latin square state for engagement mapping
   const engLatinRef      = useRef({ queue: [], counts: {} });
   const engagementModeRef = useRef(false);
+  const feltEngagedRef    = useRef(null);   // null = not yet rated, true/false = rated
+  const [feltEngaged, setFeltEngaged] = useState(null);
   const ENG_B_LEVELS  = [9, 11, 13, 15, 17, 20];
-  const ENG_T = 4, ENG_S = 1.0, ENG_D = 3.0;
+  const ENG_T = 4, ENG_S = 1.5, ENG_D = 3.0;
 
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
@@ -342,6 +344,8 @@ export default function App() {
     selectedRef.current = new Set();
     setSelectionCount(0);
     setTrialResult(null);
+    feltEngagedRef.current = null;
+    setFeltEngaged(null);
     expPhaseRef.current = 'cue';
     setExpPhase('cue');
     phaseStartRef.current = performance.now();
@@ -449,6 +453,7 @@ export default function App() {
       hits,
       raw_score:          +rawScore.toFixed(4),
       correct:            correct ? 1 : 0,
+      felt_engaged:       feltEngagedRef.current === null ? '' : feltEngagedRef.current ? 1 : 0,
       is_retest:          trial.isRetest ? 1 : 0,
       retest_of_trial_id: trial.retestOfTrialId ?? '',
       retest_rotation_delta: trial.retestRotationDelta ?? '',
@@ -552,7 +557,7 @@ export default function App() {
             </label>
             <div style={{ marginTop: 8, fontSize: 12, color: CLR.dim, lineHeight: 1.6 }}>
               {settings.engagementMode ? <>
-                <span style={{ color: CLR.target }}>■ Engagement mapping</span> — T=4, S=1.0, D=3s fixed.<br />
+                <span style={{ color: CLR.target }}>■ Engagement mapping</span> — T=4, S=1.5, D=3s fixed.<br />
                 Latin square cycles B ∈ {'{'}{ENG_B_LEVELS.join(', ')}{'}'} in random blocks.<br />
                 Maps P(correct|B) to locate engagement cliff and estimate θ.
               </> : <>
@@ -626,6 +631,19 @@ export default function App() {
                 >
                   Submit ({selectionCount} / {trialRef.current?.numTargets})
                 </Btn>
+              )}
+              {expPhase === 'respond' && engagementModeRef.current && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ color: CLR.dim, fontSize: 11 }}>engaged?</span>
+                  <Btn
+                    onClick={() => { feltEngagedRef.current = true;  setFeltEngaged(true);  }}
+                    accent={feltEngaged === true}
+                  >Yes</Btn>
+                  <Btn
+                    onClick={() => { feltEngagedRef.current = false; setFeltEngaged(false); }}
+                    accent={feltEngaged === false}
+                  >No</Btn>
+                </div>
               )}
               <Btn onClick={async () => {
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
