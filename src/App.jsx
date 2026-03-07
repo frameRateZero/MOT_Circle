@@ -53,7 +53,8 @@ export default function App() {
   });
 
   // Latin square state for engagement mapping
-  const engLatinRef   = useRef({ queue: [], counts: {} });
+  const engLatinRef      = useRef({ queue: [], counts: {} });
+  const engagementModeRef = useRef(false);
   const ENG_B_LEVELS  = [9, 11, 13, 15, 17, 20];
   const ENG_T = 4, ENG_S = 1.0, ENG_D = 3.0;
 
@@ -73,6 +74,10 @@ export default function App() {
   const retestBankRef   = useRef([]);
   const RETEST_RATE     = 0.20;  // 20% of trials are retests
   const RETEST_BANK_MAX = 15;    // only pull retests from the last N trials
+
+  useEffect(() => {
+    engagementModeRef.current = settings.engagementMode;
+  }, [settings.engagementMode]);
 
   useEffect(() => {
     countMasterScripts().then(n => setScriptCount(n));
@@ -259,7 +264,7 @@ export default function App() {
       retestOfTrialId    = source.trialId;
       retestRotationDelta = Math.PI / 2;           // exactly +90°
       rotation           = source.rotation + retestRotationDelta;
-    } else if (settings.engagementMode) {
+    } else if (engagementModeRef.current) {
       // Engagement mapping — latin square over B, fixed T=4 S=1.0 D=3s
       activeIdxRef.current = 0;
       masterID   = Math.floor(Math.random() * NUM_MASTERS);
@@ -288,18 +293,15 @@ export default function App() {
     if (!data) { alert('Master scripts missing — please regenerate.'); return; }
     dataRef.current = data;
 
-    // For retests, staircase still controls speed/duration so difficulty stays current
-    const activeStair = staircasesRef.current[activeIdxRef.current];
-    const params      = isRetest
-      ? activeStair.pickTrialParams()
-      : staircasesRef.current[activeIdxRef.current].pickTrialParams();
+    // Engagement mode: speed and duration fixed, no staircase params needed
+    const engMode = engagementModeRef.current;
+    const params  = engMode ? null : staircasesRef.current[activeIdxRef.current].pickTrialParams();
 
-    // Engagement mode overrides speed and duration regardless of staircase
-    const finalSpeed   = settings.engagementMode ? ENG_S : params.speed;
+    const finalSpeed   = engMode ? ENG_S : params.speed;
     const achievedLoad = computeLoad(numTargets, finalSpeed, numBalls);
 
     let moveDur;
-    if (settings.engagementMode) {
+    if (engMode) {
       moveDur = ENG_D;
     } else if (params.duration !== null) {
       // Duration staircase — use directly, only cap at frame buffer limit
@@ -324,9 +326,9 @@ export default function App() {
       speed:              finalSpeed,
       numTargets,         numBalls,
       targetIDs,          moveDur,
-      staircaseType:      settings.engagementMode ? 'engagement' : params.staircaseType,
-      targetLoad:         settings.engagementMode ? numBalls     : params.targetLoad,
-      staircaseLoad:      settings.engagementMode ? numBalls     : params.staircaseLoad,
+      staircaseType:      engMode ? 'engagement' : params.staircaseType,
+      targetLoad:         engMode ? numBalls      : params.targetLoad,
+      staircaseLoad:      engMode ? numBalls      : params.staircaseLoad,
       achievedLoad,       unifiedLoad,
       isRetest,
       retestOfTrialId,
@@ -357,6 +359,7 @@ export default function App() {
 
   // ── Start experiment ─────────────────────────────────────────────────────────
   const handleStartExperiment = useCallback(async () => {
+    engagementModeRef.current = settings.engagementMode;
     if (settings.engagementMode) {
       staircasesRef.current = [
         new StaircaseEngine({ type: 'density', initialLoad: 5, rule: settings.staircaseRule }),
