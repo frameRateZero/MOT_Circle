@@ -49,7 +49,13 @@ export default function App() {
     staircaseRule:       '1up2down',
     initialLoad:         6,
     durationInitialLoad: 5.0,
+    engagementMode:      false,   // latin square over B at T=4, S=1.0, D=3s
   });
+
+  // Latin square state for engagement mapping
+  const engLatinRef   = useRef({ queue: [], counts: {} });
+  const ENG_B_LEVELS  = [9, 11, 13, 15, 17, 20];
+  const ENG_T = 4, ENG_S = 1.0, ENG_D = 3.0;
 
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
@@ -253,8 +259,18 @@ export default function App() {
       retestOfTrialId    = source.trialId;
       retestRotationDelta = Math.PI / 2;           // exactly +90°
       rotation           = source.rotation + retestRotationDelta;
+    } else if (settings.engagementMode) {
+      // Engagement mapping — latin square over B, fixed T=4 S=1.0 D=3s
+      activeIdxRef.current = 0;
+      masterID   = Math.floor(Math.random() * NUM_MASTERS);
+      rotation   = Math.random() * Math.PI * 2;
+      isMirrored = Math.random() < 0.5;
+      isReversed = Math.random() < 0.5;
+      numTargets = ENG_T;
+      numBalls   = engNextB();
+      targetIDs  = shuffle(Array.from({ length: numBalls }, (_, i) => i)).slice(0, numTargets);
+      retestOfTrialId = null; retestRotationDelta = null;
     } else {
-      // Standard trial — staircase picks params
       activeIdxRef.current = Math.floor(Math.random() * staircasesRef.current.length);
       const params = staircasesRef.current[activeIdxRef.current].pickTrialParams();
       masterID     = Math.floor(Math.random() * NUM_MASTERS);
@@ -275,15 +291,17 @@ export default function App() {
     // For retests, staircase still controls speed/duration so difficulty stays current
     const activeStair = staircasesRef.current[activeIdxRef.current];
     const params      = isRetest
-      ? activeStair.pickTrialParams()   // get current load params, ignore its T/B
+      ? activeStair.pickTrialParams()
       : staircasesRef.current[activeIdxRef.current].pickTrialParams();
 
-    // Override T/B with retest values if applicable; use staircase speed/duration
-    const finalSpeed   = params.speed;
+    // Engagement mode overrides speed and duration regardless of staircase
+    const finalSpeed   = settings.engagementMode ? ENG_S : params.speed;
     const achievedLoad = computeLoad(numTargets, finalSpeed, numBalls);
 
     let moveDur;
-    if (params.duration !== null) {
+    if (settings.engagementMode) {
+      moveDur = ENG_D;
+    } else if (params.duration !== null) {
       // Duration staircase — use directly, only cap at frame buffer limit
       moveDur = Math.min(params.duration, MAX_MOVE_DUR_HARD / Math.max(finalSpeed, 0.1));
     } else {
@@ -306,9 +324,9 @@ export default function App() {
       speed:              finalSpeed,
       numTargets,         numBalls,
       targetIDs,          moveDur,
-      staircaseType:      params.staircaseType,
-      targetLoad:         params.targetLoad,
-      staircaseLoad:      params.staircaseLoad,
+      staircaseType:      settings.engagementMode ? 'engagement' : params.staircaseType,
+      targetLoad:         settings.engagementMode ? numBalls     : params.targetLoad,
+      staircaseLoad:      settings.engagementMode ? numBalls     : params.staircaseLoad,
       achievedLoad,       unifiedLoad,
       isRetest,
       retestOfTrialId,
@@ -330,13 +348,27 @@ export default function App() {
 
   const CLR_DURATION = '#bb44ff';
 
+  // ── Engagement latin square — next B value ──────────────────────────────────
+  const engNextB = useCallback(() => {
+    const ref = engLatinRef.current;
+    if (ref.queue.length === 0) ref.queue = shuffle([...ENG_B_LEVELS]);
+    return ref.queue.shift();
+  }, []);
+
   // ── Start experiment ─────────────────────────────────────────────────────────
   const handleStartExperiment = useCallback(async () => {
-    staircasesRef.current = [
-      new StaircaseEngine({ type: 'speed',    initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
-      new StaircaseEngine({ type: 'density',  initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
-      new StaircaseEngine({ type: 'duration', initialLoad: settings.durationInitialLoad, rule: settings.staircaseRule }),
-    ];
+    if (settings.engagementMode) {
+      staircasesRef.current = [
+        new StaircaseEngine({ type: 'density', initialLoad: 5, rule: settings.staircaseRule }),
+      ];
+      engLatinRef.current = { queue: [] };
+    } else {
+      staircasesRef.current = [
+        new StaircaseEngine({ type: 'speed',    initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
+        new StaircaseEngine({ type: 'density',  initialLoad: settings.initialLoad,         rule: settings.staircaseRule }),
+        new StaircaseEngine({ type: 'duration', initialLoad: settings.durationInitialLoad, rule: settings.staircaseRule }),
+      ];
+    }
     trialIdRef.current = 0;
     retestBankRef.current = [];
     setTrialCount(0);
@@ -490,7 +522,13 @@ export default function App() {
 
           <Panel title="Staircase Settings">
             <label style={S.lbl}>
-              Rule
+              Mode
+              <select value={settings.engagementMode ? 'engagement' : 'staircase'} style={S.sel}
+                onChange={e => setSettings(s => ({ ...s, engagementMode: e.target.value === 'engagement' }))}>
+                <option value="staircase">Adaptive Staircase (threshold)</option>
+                <option value="engagement">Engagement Mapping (T=4 latin square)</option>
+              </select>
+            </label>
               <select value={settings.staircaseRule} style={S.sel}
                 onChange={e => setSettings(s => ({ ...s, staircaseRule: e.target.value }))}>
                 <option value="1up2down">1-up / 2-down (~70.7%)</option>
@@ -508,12 +546,16 @@ export default function App() {
                 onChange={e => setSettings(s => ({ ...s, durationInitialLoad: +e.target.value }))} />
             </label>
             <div style={{ marginTop: 8, fontSize: 12, color: CLR.dim, lineHeight: 1.6 }}>
-              Three interleaved staircases run simultaneously:<br />
-              <span style={{ color: CLR.speed }}>■ Speed</span> — fixes T=3, B=12, varies playback speed<br />
-              <span style={{ color: CLR.density }}>■ Density</span> — fixes T=3, S=1.0, varies number of balls<br />
-              <span style={{ color: '#bb44ff' }}>■ Duration</span> — fixes T=3, B=12, S=1.0, varies time<br />
-              Speed ≈ Density threshold validates L = T×S×√B as universal unit.
-              Duration threshold tests time-limited tracking capacity independently.
+              {settings.engagementMode ? <>
+                <span style={{ color: CLR.target }}>■ Engagement mapping</span> — T=4, S=1.0, D=3s fixed.<br />
+                Latin square cycles B ∈ {'{'}{ENG_B_LEVELS.join(', ')}{'}'} in random blocks.<br />
+                Maps P(correct|B) to locate engagement cliff and estimate θ.
+              </> : <>
+                Three interleaved staircases run simultaneously:<br />
+                <span style={{ color: CLR.speed }}>■ Speed</span> — random T,B, varies playback speed<br />
+                <span style={{ color: CLR.density }}>■ Density</span> — random T, S=1.0, varies balls<br />
+                <span style={{ color: '#bb44ff' }}>■ Duration</span> — random T,B, S=1.0, varies time
+              </>}
             </div>
           </Panel>
 
