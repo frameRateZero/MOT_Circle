@@ -49,7 +49,7 @@ export default function App() {
     staircaseRule:       '1up2down',
     initialLoad:         6,
     durationInitialLoad: 5.0,
-    engagementMode:      'off',   // 'off' | 'b_latin' | 'bd_factorial'
+    engagementMode:      'off',   // 'off' | 'b_latin' | 'bd_factorial' | 'path_retest'
   });
 
   // Latin square state for engagement mapping
@@ -71,6 +71,25 @@ export default function App() {
     { B: 30, D: 0.5 }, { B: 30, D: 1.0 }, { B: 30, D: 3.0 },
   ];  // 9 cells × ~10 trials = ~90 trials for full curve
   const BD_T = 4, BD_S = 1.0;
+
+  // Path retest (mode: path_retest)
+  // Each master × targetID selection is tested at 4 durations × 4 symmetric transforms
+  // Transforms: combinations of +0/+π rotation and mirror=false/true
+  // These preserve all inter-ball distances and Bouma ellipse geometry
+  // Duration sequence: descending — test at full D first, then shorter retests
+  const PR_B           = 20;          // fixed density — diagnostic zone
+  const PR_T           = 4;
+  const PR_S           = 1.0;
+  const PR_DURATIONS   = [3.0, 2.0, 1.0, 0.5];  // test → retest descending
+  const PR_TRANSFORMS  = [             // [rotationOffset, isMirrored]
+    [0,       false],                  // T0: original
+    [Math.PI, false],                  // T1: rotate 180°
+    [0,       true ],                  // T2: mirror
+    [Math.PI, true ],                  // T3: rotate 180° + mirror
+  ];
+  // Queue ref: array of trial specs to run in order
+  const prQueueRef = useRef([]);
+  const prBaseRotRef = useRef(0);  // base rotation for current master block
 
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
@@ -303,6 +322,21 @@ export default function App() {
       engLatinRef.current._bdD = pair.D;
       targetIDs  = shuffle(Array.from({ length: numBalls }, (_, i) => i)).slice(0, numTargets);
       retestOfTrialId = null; retestRotationDelta = null;
+    } else if (engagementModeRef.current === 'path_retest') {
+      // Path retest — structured 4-transform × 4-duration grid per master
+      activeIdxRef.current = 0;
+      const spec = prNextSpec();
+      masterID   = spec.masterID;
+      rotation   = spec.rotation;
+      isMirrored = spec.isMirrored;
+      isReversed = spec.isReversed;
+      numTargets = PR_T;
+      numBalls   = PR_B;
+      targetIDs  = spec.targetIDs;
+      engLatinRef.current._prD            = spec.moveDur;
+      engLatinRef.current._prTransformIdx = spec.transformIdx;
+      engLatinRef.current._prBaseRotation = spec.baseRotation;
+      retestOfTrialId = null; retestRotationDelta = null;
     } else {
       activeIdxRef.current = Math.floor(Math.random() * staircasesRef.current.length);
       const params = staircasesRef.current[activeIdxRef.current].pickTrialParams();
@@ -328,12 +362,15 @@ export default function App() {
 
     const finalSpeed = engMode === 'bd_factorial' ? BD_S
                      : engMode === 'b_latin'      ? ENG_S
+                     : engMode === 'path_retest'  ? PR_S
                      : params.speed;
     const achievedLoad = computeLoad(numTargets, finalSpeed, numBalls);
 
     let moveDur;
     if (engMode === 'bd_factorial') {
       moveDur = engLatinRef.current._bdD;
+    } else if (engMode === 'path_retest') {
+      moveDur = engLatinRef.current._prD;
     } else if (engMode === 'b_latin') {
       moveDur = ENG_D;
     } else if (params.duration !== null) {
@@ -341,12 +378,9 @@ export default function App() {
       moveDur = Math.min(params.duration, MAX_MOVE_DUR_HARD / Math.max(finalSpeed, 0.1));
     } else {
       // Speed/density staircases — load-scaled duration with ±20% jitter
-      // Higher load → shorter duration (more demanding per second)
-      // Reference: load=5 → ~3s, scales as 1/sqrt(load)
       const baseDur = 3.0 * Math.sqrt(5.0 / Math.max(achievedLoad, 0.5));
       const jitter  = 0.8 + Math.random() * 0.4;
       const rawDur  = baseDur * jitter;
-      // Hard cap: must not exceed frame buffer at this speed
       const frameCap = MAX_MOVE_DUR_HARD / Math.max(finalSpeed, 0.1);
       moveDur = Math.min(Math.max(rawDur, 1.0), frameCap);
     }
@@ -364,6 +398,11 @@ export default function App() {
       staircaseLoad:      engMode !== 'off' ? numBalls : params.staircaseLoad,
       achievedLoad,       unifiedLoad,
       isRetest,
+      // path_retest specific fields
+      prTransformIdx:   engMode === 'path_retest' ? engLatinRef.current._prTransformIdx : null,
+      prBaseRotation:   engMode === 'path_retest'
+                          ? +(engLatinRef.current._prBaseRotation * 180 / Math.PI).toFixed(1)
+                          : null,
       retestOfTrialId,
       retestRotationDelta: retestRotationDelta
         ? +(retestRotationDelta * 180 / Math.PI).toFixed(1)
@@ -397,6 +436,48 @@ export default function App() {
     const ref = engLatinRef.current;
     if (ref.queue.length === 0) ref.queue = shuffle([...BD_PAIRS]);
     return ref.queue.shift();
+  }, []);
+
+  // ── Path retest — next trial spec (path_retest mode) ─────────────────────────
+  // Each call to prNextSpec() returns the next queued spec.
+  // When queue is empty, generates a new master block:
+  //   - new masterID, base rotation, targetIDs
+  //   - 4 transforms × 4 durations = 16 specs, shuffled within each dimension:
+  //       durations shuffled independently per transform
+  //       transforms presented in random order
+  // This gives full coverage of the 4×4 grid per master without fixed ordering.
+  const prNextSpec = useCallback(() => {
+    if (prQueueRef.current.length > 0) return prQueueRef.current.shift();
+
+    // Generate new master block
+    const masterID   = Math.floor(Math.random() * NUM_MASTERS);
+    const baseRot    = Math.random() * Math.PI * 2;
+    const isReversed = Math.random() < 0.5;
+    const allBalls   = Array.from({ length: PR_B }, (_, i) => i);
+    const targetIDs  = shuffle(allBalls).slice(0, PR_T);
+    prBaseRotRef.current = baseRot;
+
+    // Build 16 specs: shuffle transform order, shuffle duration order per transform
+    const transformOrder = shuffle([0, 1, 2, 3]);
+    const specs = [];
+    for (const ti of transformOrder) {
+      const [rotOffset, isMirrored] = PR_TRANSFORMS[ti];
+      const durOrder = shuffle([...PR_DURATIONS]);
+      for (const dur of durOrder) {
+        specs.push({
+          masterID,
+          targetIDs:       [...targetIDs],
+          rotation:        baseRot + rotOffset,
+          isMirrored,
+          isReversed,
+          moveDur:         dur,
+          transformIdx:    ti,       // 0–3, logged for analysis
+          baseRotation:    baseRot,
+        });
+      }
+    }
+    prQueueRef.current = specs;
+    return prQueueRef.current.shift();
   }, []);
 
   // ── Start experiment ─────────────────────────────────────────────────────────
@@ -495,6 +576,8 @@ export default function App() {
       is_retest:          trial.isRetest ? 1 : 0,
       retest_of_trial_id: trial.retestOfTrialId ?? '',
       retest_rotation_delta: trial.retestRotationDelta ?? '',
+      pr_transform_idx:   trial.prTransformIdx ?? '',
+      pr_base_rotation:   trial.prBaseRotation ?? '',
     };
 
     await saveTrialLog(logRow);
@@ -574,6 +657,7 @@ export default function App() {
                 <option value="off">Adaptive Staircase (threshold)</option>
                 <option value="b_latin">Engagement Mapping — B latin square</option>
                 <option value="bd_factorial">Engagement Mapping — B×D factorial</option>
+                <option value="path_retest">Path Retest — 4 transforms × 4 durations</option>
               </select>
             </label>
             <label style={S.lbl}>
@@ -604,6 +688,13 @@ export default function App() {
                 9 cells: B ∈ {'{'}{[...new Set(BD_PAIRS.map(p=>p.B))].join(', ')}{'}'}  ×  D ∈ {'{'}{[...new Set(BD_PAIRS.map(p=>p.D))].join(', ')}{'}'}<br />
                 Separates survival-only vs engagement-cliff hypotheses.<br />
                 <span style={{ color: CLR.speed }}>Key cell: B=30, D=0.5s</span> — survival predicts 0.93, cliff predicts 0.13.
+              </> : settings.engagementMode === 'path_retest' ? <>
+                <span style={{ color: CLR.target }}>■ Path retest</span> — B={PR_B}, T={PR_T}, S={PR_S} fixed.<br />
+                Each master block: same targets, 4 transforms × 4 durations = 16 trials.<br />
+                Transforms: 0°, 180°, mirror, 180°+mirror — preserves crowding geometry.<br />
+                Durations: {PR_DURATIONS.join('s, ')}s — test then bracket by truncation.<br />
+                <span style={{ color: CLR.speed }}>Logs:</span> pr_transform_idx (0–3), pr_base_rotation, master_id.<br />
+                Identifies <em>when</em> slot corruption occurs within a fixed path.
               </> : <>
                 Three interleaved staircases run simultaneously:<br />
                 <span style={{ color: CLR.speed }}>■ Speed</span> — random T,B, varies playback speed<br />
