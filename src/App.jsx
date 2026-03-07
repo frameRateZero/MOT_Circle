@@ -529,6 +529,8 @@ export default function App() {
                 <option value="engagement">Engagement Mapping (T=4 latin square)</option>
               </select>
             </label>
+            <label style={S.lbl}>
+              Rule
               <select value={settings.staircaseRule} style={S.sel}
                 onChange={e => setSettings(s => ({ ...s, staircaseRule: e.target.value }))}>
                 <option value="1up2down">1-up / 2-down (~70.7%)</option>
