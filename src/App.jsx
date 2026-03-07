@@ -57,7 +57,7 @@ export default function App() {
   const engagementModeRef = useRef(false);
   const feltEngagedRef    = useRef(null);   // null = not yet rated, true/false = rated
   const [feltEngaged, setFeltEngaged] = useState(null);
-  const ENG_B_LEVELS  = [9, 11, 13, 15, 17, 20];
+  const ENG_B_LEVELS  = [9, 13, 17, 20, 25, 30];
   const ENG_T = 4, ENG_S = 1.5, ENG_D = 3.0;
 
   const canvasRef      = useRef(null);
@@ -622,16 +622,23 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'center' }}>
-              {expPhase === 'respond' && (
-                <Btn
-                  onClick={handleSubmitResponse}
-                  accent={selectionCount === trialRef.current?.numTargets}
-                  disabled={selectionCount !== trialRef.current?.numTargets}
-                >
-                  Submit ({selectionCount} / {trialRef.current?.numTargets})
-                </Btn>
-              )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                {expPhase === 'respond' && (
+                  <Btn
+                    onClick={handleSubmitResponse}
+                    accent={selectionCount === trialRef.current?.numTargets}
+                    disabled={selectionCount !== trialRef.current?.numTargets}
+                  >
+                    Submit ({selectionCount} / {trialRef.current?.numTargets})
+                  </Btn>
+                )}
+                <Btn onClick={async () => {
+                  if (rafRef.current) cancelAnimationFrame(rafRef.current);
+                  setLogs(await getAllTrialLogs());
+                  setPhase('setup');
+                }}>End Session</Btn>
+              </div>
               {expPhase === 'respond' && engagementModeRef.current && (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <span style={{ color: CLR.dim, fontSize: 11 }}>engaged?</span>
@@ -645,11 +652,6 @@ export default function App() {
                   >No</Btn>
                 </div>
               )}
-              <Btn onClick={async () => {
-                if (rafRef.current) cancelAnimationFrame(rafRef.current);
-                setLogs(await getAllTrialLogs());
-                setPhase('setup');
-              }}>End Session</Btn>
             </div>
           </div>
 

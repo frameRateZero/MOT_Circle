@@ -6,7 +6,7 @@
 
 export const ARENA_RADIUS          = 390;
 export const BALL_RADIUS           = 10;
-export const NUM_BALLS             = 20;
+export const NUM_BALLS             = 30;
 export const NUM_MASTERS           = 20;
 export const SIMULATION_HZ         = 120;
 export const SIMULATION_DURATION_S = 300;

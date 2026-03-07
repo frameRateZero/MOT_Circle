@@ -49,9 +49,9 @@ export class StaircaseEngine {
     let numTargets, numBalls, speed, duration;
 
     if (this.type === 'speed') {
-      // Random T (1-5) and B (T*2+1 to 20), solve for S
+      // Random T (1-5) and B (T*2+1 to 30), solve for S
       numTargets  = this._rndInt(1, 5);
-      numBalls    = this._rndInt(numTargets * 2 + 1, 20);
+      numBalls    = this._rndInt(numTargets * 2 + 1, 30);
       speed       = this.load / (numTargets * Math.sqrt(numBalls));
       duration    = null;
 
@@ -64,9 +64,9 @@ export class StaircaseEngine {
       duration    = null;
 
     } else {
-      // Random T (1-5) and B (T*2+1 to 20), fixed S=1.0, load IS duration
+      // Random T (1-5) and B (T*2+1 to 30), fixed S=1.0, load IS duration
       numTargets  = this._rndInt(1, 5);
-      numBalls    = this._rndInt(numTargets * 2 + 1, 20);
+      numBalls    = this._rndInt(numTargets * 2 + 1, 30);
       speed       = 1.0;
       duration    = this.load;
     }
@@ -75,7 +75,7 @@ export class StaircaseEngine {
     const finalTargets = Math.max(1, Math.min(6, numTargets));
     // Targets must be a strict minority: T < B/2, i.e. B > T*2
     const minBalls     = finalTargets * 2 + 1;
-    const finalBalls   = Math.max(minBalls, Math.min(20, Math.round(numBalls)));
+    const finalBalls   = Math.max(minBalls, Math.min(30, Math.round(numBalls)));
     const finalSpeed   = Math.max(0.1, Math.min(8.0, speed));
 
     // Spatial load after clamping (for logging)
