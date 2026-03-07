@@ -90,6 +90,7 @@ export default function App() {
   // Queue ref: array of trial specs to run in order
   const prQueueRef = useRef([]);
   const prBaseRotRef = useRef(0);  // base rotation for current master block
+  const prMasterQueueRef = useRef([]);  // shuffle-cycle of master IDs, no-replacement
 
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
@@ -446,8 +447,6 @@ export default function App() {
   //   - one random target selection, one random base rotation
   //   - 4 transforms × 4 durations = 16 specs
   //   - transform order randomised, duration order randomised per transform
-  const prMasterQueueRef = useRef([]);   // shuffle-cycle of master IDs
-
   const prNextSpec = useCallback(() => {
     if (prQueueRef.current.length > 0) return prQueueRef.current.shift();
 
