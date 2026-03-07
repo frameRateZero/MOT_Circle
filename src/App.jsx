@@ -49,16 +49,28 @@ export default function App() {
     staircaseRule:       '1up2down',
     initialLoad:         6,
     durationInitialLoad: 5.0,
-    engagementMode:      false,   // latin square over B at T=4, S=1.0, D=3s
+    engagementMode:      'off',   // 'off' | 'b_latin' | 'bd_factorial'
   });
 
   // Latin square state for engagement mapping
-  const engLatinRef      = useRef({ queue: [], counts: {} });
-  const engagementModeRef = useRef(false);
-  const feltEngagedRef    = useRef(null);   // null = not yet rated, true/false = rated
+  const engLatinRef      = useRef({ queue: [] });
+  const engagementModeRef = useRef('off');
+  const feltEngagedRef    = useRef(null);
   const [feltEngaged, setFeltEngaged] = useState(null);
+
+  // B-only latin square (mode: b_latin)
   const ENG_B_LEVELS  = [9, 13, 17, 20, 25, 30];
-  const ENG_T = 4, ENG_S = 1.5, ENG_D = 3.0;
+  const ENG_T = 4, ENG_S = 1.0, ENG_D = 3.0;
+
+  // B×D factorial (mode: bd_factorial)
+  // Cells chosen to maximally separate survival-only vs engagement-cliff hypotheses
+  // B=9 is baseline (both models agree), B=20/30 are diagnostic
+  const BD_PAIRS = [
+    { B:  9, D: 0.5 }, { B:  9, D: 1.0 }, { B:  9, D: 3.0 },
+    { B: 20, D: 0.5 }, { B: 20, D: 1.0 }, { B: 20, D: 3.0 },
+    { B: 30, D: 0.5 }, { B: 30, D: 1.0 }, { B: 30, D: 3.0 },
+  ];  // 9 cells × ~10 trials = ~90 trials for full curve
+  const BD_T = 4, BD_S = 1.0;
 
   const canvasRef      = useRef(null);
   const rafRef         = useRef(null);
@@ -266,8 +278,8 @@ export default function App() {
       retestOfTrialId    = source.trialId;
       retestRotationDelta = Math.PI / 2;           // exactly +90°
       rotation           = source.rotation + retestRotationDelta;
-    } else if (engagementModeRef.current) {
-      // Engagement mapping — latin square over B, fixed T=4 S=1.0 D=3s
+    } else if (engagementModeRef.current === 'b_latin') {
+      // B-only latin square — fixed T=4, S=1.0, D=3s
       activeIdxRef.current = 0;
       masterID   = Math.floor(Math.random() * NUM_MASTERS);
       rotation   = Math.random() * Math.PI * 2;
@@ -275,6 +287,20 @@ export default function App() {
       isReversed = Math.random() < 0.5;
       numTargets = ENG_T;
       numBalls   = engNextB();
+      targetIDs  = shuffle(Array.from({ length: numBalls }, (_, i) => i)).slice(0, numTargets);
+      retestOfTrialId = null; retestRotationDelta = null;
+    } else if (engagementModeRef.current === 'bd_factorial') {
+      // B×D factorial — fixed T=4, S=1.0, pair drawn from latin square
+      activeIdxRef.current = 0;
+      masterID   = Math.floor(Math.random() * NUM_MASTERS);
+      rotation   = Math.random() * Math.PI * 2;
+      isMirrored = Math.random() < 0.5;
+      isReversed = Math.random() < 0.5;
+      numTargets = BD_T;
+      const pair = bdNextPair();
+      numBalls   = pair.B;
+      // Store D on ref so moveDur block can read it
+      engLatinRef.current._bdD = pair.D;
       targetIDs  = shuffle(Array.from({ length: numBalls }, (_, i) => i)).slice(0, numTargets);
       retestOfTrialId = null; retestRotationDelta = null;
     } else {
@@ -295,15 +321,20 @@ export default function App() {
     if (!data) { alert('Master scripts missing — please regenerate.'); return; }
     dataRef.current = data;
 
-    // Engagement mode: speed and duration fixed, no staircase params needed
+    // Engagement modes: speed and duration fixed, no staircase params needed
     const engMode = engagementModeRef.current;
-    const params  = engMode ? null : staircasesRef.current[activeIdxRef.current].pickTrialParams();
+    const params  = engMode !== 'off' ? null
+      : staircasesRef.current[activeIdxRef.current].pickTrialParams();
 
-    const finalSpeed   = engMode ? ENG_S : params.speed;
+    const finalSpeed = engMode === 'bd_factorial' ? BD_S
+                     : engMode === 'b_latin'      ? ENG_S
+                     : params.speed;
     const achievedLoad = computeLoad(numTargets, finalSpeed, numBalls);
 
     let moveDur;
-    if (engMode) {
+    if (engMode === 'bd_factorial') {
+      moveDur = engLatinRef.current._bdD;
+    } else if (engMode === 'b_latin') {
       moveDur = ENG_D;
     } else if (params.duration !== null) {
       // Duration staircase — use directly, only cap at frame buffer limit
@@ -328,9 +359,9 @@ export default function App() {
       speed:              finalSpeed,
       numTargets,         numBalls,
       targetIDs,          moveDur,
-      staircaseType:      engMode ? 'engagement' : params.staircaseType,
-      targetLoad:         engMode ? numBalls      : params.targetLoad,
-      staircaseLoad:      engMode ? numBalls      : params.staircaseLoad,
+      staircaseType:      engMode !== 'off' ? engMode  : params.staircaseType,
+      targetLoad:         engMode !== 'off' ? numBalls : params.targetLoad,
+      staircaseLoad:      engMode !== 'off' ? numBalls : params.staircaseLoad,
       achievedLoad,       unifiedLoad,
       isRetest,
       retestOfTrialId,
@@ -354,17 +385,24 @@ export default function App() {
 
   const CLR_DURATION = '#bb44ff';
 
-  // ── Engagement latin square — next B value ──────────────────────────────────
+  // ── Engagement latin square — next B value (b_latin mode) ───────────────────
   const engNextB = useCallback(() => {
     const ref = engLatinRef.current;
     if (ref.queue.length === 0) ref.queue = shuffle([...ENG_B_LEVELS]);
     return ref.queue.shift();
   }, []);
 
+  // ── B×D factorial — next pair (bd_factorial mode) ────────────────────────────
+  const bdNextPair = useCallback(() => {
+    const ref = engLatinRef.current;
+    if (ref.queue.length === 0) ref.queue = shuffle([...BD_PAIRS]);
+    return ref.queue.shift();
+  }, []);
+
   // ── Start experiment ─────────────────────────────────────────────────────────
   const handleStartExperiment = useCallback(async () => {
     engagementModeRef.current = settings.engagementMode;
-    if (settings.engagementMode) {
+    if (settings.engagementMode !== 'off') {
       staircasesRef.current = [
         new StaircaseEngine({ type: 'density', initialLoad: 5, rule: settings.staircaseRule }),
       ];
@@ -531,10 +569,11 @@ export default function App() {
           <Panel title="Staircase Settings">
             <label style={S.lbl}>
               Mode
-              <select value={settings.engagementMode ? 'engagement' : 'staircase'} style={S.sel}
-                onChange={e => setSettings(s => ({ ...s, engagementMode: e.target.value === 'engagement' }))}>
-                <option value="staircase">Adaptive Staircase (threshold)</option>
-                <option value="engagement">Engagement Mapping (T=4 latin square)</option>
+              <select value={settings.engagementMode} style={S.sel}
+                onChange={e => setSettings(s => ({ ...s, engagementMode: e.target.value }))}>
+                <option value="off">Adaptive Staircase (threshold)</option>
+                <option value="b_latin">Engagement Mapping — B latin square</option>
+                <option value="bd_factorial">Engagement Mapping — B×D factorial</option>
               </select>
             </label>
             <label style={S.lbl}>
@@ -556,10 +595,15 @@ export default function App() {
                 onChange={e => setSettings(s => ({ ...s, durationInitialLoad: +e.target.value }))} />
             </label>
             <div style={{ marginTop: 8, fontSize: 12, color: CLR.dim, lineHeight: 1.6 }}>
-              {settings.engagementMode ? <>
-                <span style={{ color: CLR.target }}>■ Engagement mapping</span> — T=4, S=1.5, D=3s fixed.<br />
-                Latin square cycles B ∈ {'{'}{ENG_B_LEVELS.join(', ')}{'}'} in random blocks.<br />
-                Maps P(correct|B) to locate engagement cliff and estimate θ.
+              {settings.engagementMode === 'b_latin' ? <>
+                <span style={{ color: CLR.target }}>■ B latin square</span> — T=4, S=1.0, D=3s fixed.<br />
+                Cycles B ∈ {'{'}{ENG_B_LEVELS.join(', ')}{'}'} in random blocks.<br />
+                Maps P(correct|B) — estimates engagement cliff shape.
+              </> : settings.engagementMode === 'bd_factorial' ? <>
+                <span style={{ color: CLR.target }}>■ B×D factorial</span> — T=4, S=1.0 fixed.<br />
+                9 cells: B ∈ {'{'}{[...new Set(BD_PAIRS.map(p=>p.B))].join(', ')}{'}'}  ×  D ∈ {'{'}{[...new Set(BD_PAIRS.map(p=>p.D))].join(', ')}{'}'}<br />
+                Separates survival-only vs engagement-cliff hypotheses.<br />
+                <span style={{ color: CLR.speed }}>Key cell: B=30, D=0.5s</span> — survival predicts 0.93, cliff predicts 0.13.
               </> : <>
                 Three interleaved staircases run simultaneously:<br />
                 <span style={{ color: CLR.speed }}>■ Speed</span> — random T,B, varies playback speed<br />
@@ -639,7 +683,7 @@ export default function App() {
                   setPhase('setup');
                 }}>End Session</Btn>
               </div>
-              {expPhase === 'respond' && engagementModeRef.current && (
+              {expPhase === 'respond' && engagementModeRef.current !== 'off' && (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <span style={{ color: CLR.dim, fontSize: 11 }}>engaged?</span>
                   <Btn
